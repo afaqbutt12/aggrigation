@@ -2,4 +2,5 @@
 __pycache__
 /aggregation/__pycache__
 aggregation/__pycache__
+node_modules
 .env
