@@ -1,9 +1,11 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import subprocess
+import subprocess
 import logging
 import sys
 import os
+import threading
 from dotenv import load_dotenv
 from main import CompanyDataController
 
@@ -17,13 +19,46 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Set your script path here
-script_path = os.getenv('path', "D:\\spectreco\\sarima-script\\aggregation\\main.py")
+script_path = r"D:\\spectreco\\sarima-script\\aggregation\\main.py"
+
+def run_script_in_background(company_id):
+    try:
+        cmd_args = [sys.executable, script_path]
+        logger.info(f"company data===============>>>>>>: {cmd_args}")
+        if company_id is not None:
+            cmd_args.extend(['--company_id', str(company_id)])
+            logger.info(f"Starting aggregation script for company_id: {company_id}")
+        else:
+            logger.info("Starting aggregation script for all companies")
+
+        logger.info(f"Executing command: {' '.join(cmd_args)}")
+
+        result = subprocess.run(
+            cmd_args,
+            cwd=os.path.dirname(script_path),
+            capture_output=True,
+            text=True,
+            timeout=3600
+        )
+
+        if result.returncode == 0:
+            logger.info("Aggregation script completed successfully")
+            logger.info(f"Output: {result.stdout}")
+        else:
+            logger.error(f"Aggregation failed with code {result.returncode}")
+            logger.error(f"Stderr: {result.stderr}")
+    except subprocess.TimeoutExpired:
+        logger.error("Aggregation script timed out")
+    except Exception as e:
+        logger.error(f"Error in background aggregation: {str(e)}")
+
 
 @app.route('/run-aggregation', methods=['POST'])
 def run_aggregation():
     try:
-        company_id = request.json.get('company_id') or request.args.get('company_id')
-        
+        company_id = request.json.get('company_id') if request.json else None
+        company_id = company_id or request.args.get('company_id')
+        logger.info(f"company data: {company_id}")
         if company_id:
             try:
                 company_id = int(company_id)
@@ -32,51 +67,21 @@ def run_aggregation():
                     'status': 'error',
                     'error': 'Invalid company_id. Must be an integer.'
                 }), 400
-        
-        cmd_args = [sys.executable, script_path]
-        
-        if company_id:
-            cmd_args.extend(['--company_id', str(company_id)])
-            logger.info(f"Starting aggregation script for company_id: {company_id}")
         else:
-            logger.info("Starting aggregation script for all companies")
-        
-        logger.info(f"Executing command: {' '.join(cmd_args)}")
-        
-        result = subprocess.run(
-            cmd_args,
-            cwd=os.path.dirname(script_path),  # Set working directory
-            capture_output=True,  # Capture stdout and stderr
-            text=True,  # Return strings instead of bytes
-            timeout=3600  # 1 hour timeout
-        )
-        
-        if result.returncode == 0:
-            logger.info("Aggregation script completed successfully")
-            return jsonify({
-                'status': 'success',
-                'message': 'Aggregation completed successfully',
-                'output': result.stdout,
-                'company_id': company_id
-            }), 200
-        else:
-            logger.error(f"Aggregation script failed with return code {result.returncode}")
-            logger.error(f"Script stderr: {result.stderr}")
-            return jsonify({
-                'status': 'error',
-                'error': result.stderr,
-                'output': result.stdout,
-                'return_code': result.returncode
-            }), 500
-            
-    except subprocess.TimeoutExpired:
-        logger.error("Aggregation script timed out")
+            company_id = None
+
+        # Run script in background thread
+        thread = threading.Thread(target=run_script_in_background, args=(company_id,))
+        thread.start()
+
         return jsonify({
-            'status': 'error',
-            'error': 'Script execution timed out'
-        }), 500
+            'status': 'started',
+            'message': 'Aggregation process has been started in the background.',
+            'company_id': company_id
+        }), 202
+
     except Exception as e:
-        logger.error(f"Error running aggregation: {str(e)}")
+        logger.error(f"Error triggering background aggregation: {str(e)}")
         return jsonify({
             'status': 'error',
             'error': str(e)
