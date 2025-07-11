@@ -190,7 +190,7 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                             merged_objects.append(dimension)
                         if len(merged_objects) > 0:
                             final_dimension = merge_objects(merged_objects)
-
+                    c_name = " "
                     quarter = f"Q{count}"
                     months = '-'.join(obj['month'] for obj in group)
                     code = next((doc for doc in allCodes if doc['_id'] == ObjectId(result[i]['internal_code_id'])), None)
@@ -200,26 +200,38 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                     else:
                         c_code = " "
                         c_name = " "
-
+                    cdata_quarter_collection.delete_many({
+                        "company_code": result[i]['company_code'],
+                        "quarter": quarter,
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": result[i]['reporting_year'],
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": result[i]['internal_code_id'],
+                        "code_name": c_name,
+                        "code": c_code,
+                        "ref_table": "cdata_month",
+                        "is_forecast": False,
+                    })
                     cdata_quarter_collection.insert_one({
-                                        "company_code": result[i]['company_code'],
-                                        "quarter": quarter,
-                                        "month": months,
-                                        "type_year": result[i]['type_year'],
-                                        "reporting_year": result[i]['reporting_year'],
-                                        "qty": total_qty,
-                                        "site_code": result[i]['site_code'],
-                                        "internal_code_id": result[i]['internal_code_id'],
-                                        "code_name": c_name,
-                                        "code": c_code,
-                                        "value": total_value,
-                                        "currency": result[i]['currency'],
-                                        "dimension": final_dimension,
-                                        "unit": result[i]['unit'],
-                                        "description": result[i]['description'],
-                                        "ref_table": "cdata_month",
-                                        "is_forecast": False,
-                                    })
+                        "company_code": result[i]['company_code'],
+                        "quarter": quarter,
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": result[i]['reporting_year'],
+                        "qty": total_qty,
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": result[i]['internal_code_id'],
+                        "code_name": c_name,
+                        "code": c_code,
+                        "value": total_value,
+                        "currency": result[i]['currency'],
+                        "dimension": final_dimension,
+                        "unit": result[i]['unit'],
+                        "description": result[i]['description'],
+                        "ref_table": "cdata_month",
+                        "is_forecast": False,
+                    })
                     
                     sarima_array.append(total_qty)
                     count += 1 
@@ -228,7 +240,13 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                     total_qty = sum(safe_int(obj['qty']) for obj in group)
                     total_value = 0
                     total_value = sum(safe_int(obj['value']) for obj in group)
-                        
+                    code = next((doc for doc in allCodes if doc['_id'] == ObjectId(result[i]['internal_code_id'])), None)
+                    if code is not None:
+                        c_code = code['code']
+                        c_name = code['name']
+                    else:
+                        c_code = " "
+                        c_name = " "
                     quarter = f"Q{count}"
                     months = '-'.join(obj['month'] for obj in group)
                     
@@ -240,22 +258,35 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                     narration = entry.get("narration", "")
                     url = entry.get("url", "")
                     description = f"{narration} {url}"
+                    cdata_quarter_collection.delete_many({
+                        "company_code": result[i]['company_code'],
+                        "quarter": quarter,
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": result[i]['reporting_year'],
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": result[i]['internal_code_id'],
+                        "code_name": c_name,
+                        "code": c_code,
+                        "ref_table": "cdata_month",
+                        "is_forecast": True,
+                    })
                     cdata_quarter_collection.insert_one({
-                                        "company_code": result[i]['company_code'],
-                                        "quarter": quarter,
-                                        "month": months,
-                                        "type_year": result[i]['type_year'],
-                                        "reporting_year": result[i]['reporting_year'],
-                                        "qty": total_qty,
-                                        "site_code": result[i]['site_code'],
-                                        "internal_code_id": result[i]['internal_code_id'],
-                                        "code_name": c_name,
-                                        "code": c_code,
-                                        "value": total_value,
-                                        "description": result[i]['description'],
-                                        "ref_table": "cdata_month",
-                                        "is_forecast": True,
-                                    })
+                        "company_code": result[i]['company_code'],
+                        "quarter": quarter,
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": result[i]['reporting_year'],
+                        "qty": total_qty,
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": result[i]['internal_code_id'],
+                        "code_name": c_name,
+                        "code": c_code,
+                        "value": total_value,
+                        "description": result[i]['description'],
+                        "ref_table": "cdata_month",
+                        "is_forecast": True,
+                    })
                     
                     sarima_array.append(total_qty)
                     count += 1 
@@ -317,7 +348,7 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                     quarter = f"Semester{count}"
                     months = '-'.join(obj['month'] for obj in group)
                     code = next((doc for doc in allCodes if doc['_id'] == ObjectId(result[i]['internal_code_id'])), None)
-                    
+                    c_name=" "
                     if code is not None:
                         c_code = code['code']
                         c_name = code['name']
@@ -329,25 +360,37 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                     narration = entry.get("narration", "")
                     url = entry.get("url", "")
                     description = f"{narration} {url}"
+                    cdata_BiAnnual_collection.delete_many({
+                        "company_code": result[i]['company_code'],
+                        "semi_annual": quarter,
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": result[i]['reporting_year'],
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": ObjectId(result[i]['internal_code_id']),
+                        "code_name": c_name,
+                        "code": c_code,
+                        "is_forecast": False,
+                    })
                     cdata_BiAnnual_collection.insert_one({
-                                        "company_code": result[i]['company_code'],
-                                        "semi_annual": quarter,
-                                        "month": months,
-                                        "type_year": result[i]['type_year'],
-                                        "reporting_year": result[i]['reporting_year'],
-                                        "qty": total_qty,
-                                        "site_code": result[i]['site_code'],
-                                        "internal_code_id": ObjectId(result[i]['internal_code_id']),
-                                        "code_name": c_name,
-                                        "code": c_code,
-                                        "value": total_value,
-                                        "currency": result[i]['currency'],
-                                        "dimension": final_dimension,
-                                        "unit": result[i]['unit'],
-                                        "description": result[i]['description'],
-                                        "ref_table": "cdata_month",
-                                        "is_forecast": False
-                                    })
+                        "company_code": result[i]['company_code'],
+                        "semi_annual": quarter,
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": result[i]['reporting_year'],
+                        "qty": total_qty,
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": ObjectId(result[i]['internal_code_id']),
+                        "code_name": c_name,
+                        "code": c_code,
+                        "value": total_value,
+                        "currency": result[i]['currency'],
+                        "dimension": final_dimension,
+                        "unit": result[i]['unit'],
+                        "description": result[i]['description'],
+                        "ref_table": "cdata_month",
+                        "is_forecast": False
+                    })
                     
                     sarima_array.append(total_qty)
                     count += 1 
@@ -357,24 +400,41 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                     total_value = sum(safe_int(obj['value']) for obj in group)
                     quarter = f"Semester{count}"
                     months = '-'.join(obj['month'] for obj in group)
-                    
+                    code = next((doc for doc in allCodes if doc['_id'] == ObjectId(result[i]['internal_code_id'])), None)
+                    if code is not None:
+                        c_code = code['code']
+                        c_name = code['name']
+                    else:
+                        c_code = " "
+                        c_name = " "
                     next_data = result[i+6] if i+6 < len(result) else None 
-                    
+                    cdata_BiAnnual_collection.delete_many({
+                        "company_code": result[i]['company_code'],
+                        "semi_annual": quarter,
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": result[i]['reporting_year'],
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": ObjectId(result[i]['internal_code_id']),
+                        "code_name": c_name,
+                        "code": c_code,
+                        "is_forecast": True,
+                    })
                     cdata_BiAnnual_collection.insert_one({
-                                        "company_code": result[i]['company_code'],
-                                        "semi_annual": quarter,
-                                        "month": months,
-                                        "type_year": result[i]['type_year'],
-                                        "reporting_year": result[i]['reporting_year'],
-                                        "qty": total_qty,
-                                        "site_code": result[i]['site_code'],
-                                        "internal_code_id": ObjectId(result[i]['internal_code_id']),
-                                        "code_name": c_name,
-                                        "code": c_code,
-                                        "value": total_value,
-                                        "description": result[i]['description'],
-                                        "is_forecast": True
-                                    })
+                        "company_code": result[i]['company_code'],
+                        "semi_annual": quarter,
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": result[i]['reporting_year'],
+                        "qty": total_qty,
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": ObjectId(result[i]['internal_code_id']),
+                        "code_name": c_name,
+                        "code": c_code,
+                        "value": total_value,
+                        "description": result[i]['description'],
+                        "is_forecast": True
+                    })
                     
                     sarima_array.append(total_qty)
                     count += 1 
@@ -423,7 +483,7 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                         if len(merged_objects) > 0:
                             final_dimension = merge_objects(merged_objects)
                             # final_dimension = 0
-
+                    c_name=" "
                     months = '-'.join(obj['month'] for obj in group)
                     code = next((doc for doc in allCodes if doc['_id'] == ObjectId(result[i]['internal_code_id'])), None)
                     if code is not None:
@@ -437,24 +497,35 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                         count = 0
                     narration = entry.get("narration", "")
                     url = entry.get("url", "")
-                    description = f"{narration} {url}"    
+                    description = f"{narration} {url}"  
+                    cdata_yearly_collection.delete_many({
+                        "company_code": result[i]['company_code'],
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": reporting_year',
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": result[i]['internal_code_id'],
+                        "code_name": c_name,                                       
+                        "code": c_code,
+                        "is_forecast": False,
+                    })  
                     cdata_yearly_collection.insert_one({
-                                        "company_code": result[i]['company_code'],
-                                        "month": months,
-                                        "type_year": result[i]['type_year'],
-                                        "reporting_year": reporting_year,
-                                        "qty": total_qty,
-                                        "site_code": result[i]['site_code'],
-                                        "internal_code_id": result[i]['internal_code_id'],
-                                        "code_name": c_name,
-                                        "code": c_code,
-                                        "value": total_value,
-                                        "currency": result[i]['currency'],
-                                        "dimension": final_dimension,
-                                        "unit": result[i]['unit'],
-                                        "description": result[i]['description'],
-                                        "is_forecast": False,
-                                    })
+                        "company_code": result[i]['company_code'],
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": reporting_year,
+                        "qty": total_qty,
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": result[i]['internal_code_id'],
+                        "code_name": c_name,
+                        "code": c_code,
+                        "value": total_value,
+                        "currency": result[i]['currency'],
+                        "dimension": final_dimension,
+                        "unit": result[i]['unit'],
+                        "description": result[i]['description'],
+                        "is_forecast": False,
+                    })
                     
                     sarima_array.append(total_qty)
                     count += 1 
@@ -463,25 +534,41 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                     total_value = sum(safe_int(obj['value']) for obj in group)
 
                     months = '-'.join(obj['month'] for obj in group)
-
+                    code = next((doc for doc in allCodes if doc['_id'] == ObjectId(result[i]['internal_code_id'])), None)
+                    if code is not None:
+                        c_code = code['code']
+                        c_name = code['name']
+                    else:
+                        c_code = " "
+                        c_name = " "
                     next_data = result[i+12] if i+12 < len(result) else None
                     if next_data is not None and next_data['type_year'] != result[i]['type_year']:
                         count = 0
-                    
+                    cdata_yearly_collection.delete_many({
+                        "company_code": result[i]['company_code'],
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": reporting_year,
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": result[i]['internal_code_id'],
+                        "code_name": c_name,                                       
+                        "code": c_code,
+                        "is_forecast": True,
+                    })
                     cdata_yearly_collection.insert_one({
-                                        "company_code": result[i]['company_code'],
-                                        "month": months,
-                                        "type_year": result[i]['type_year'],
-                                        "reporting_year": reporting_year,
-                                        "qty": total_qty,
-                                        "site_code": result[i]['site_code'],
-                                        "internal_code_id": (result[i]['internal_code_id']),
-                                        "code_name": c_name,
-                                        "code": c_code,
-                                        "description": result[i]['description'],
-                                        "value": total_value,
-                                        "is_forecast": True,
-                                    })
+                        "company_code": result[i]['company_code'],
+                        "month": months,
+                        "type_year": result[i]['type_year'],
+                        "reporting_year": reporting_year,
+                        "qty": total_qty,
+                        "site_code": result[i]['site_code'],
+                        "internal_code_id": (result[i]['internal_code_id']),
+                        "code_name": c_name,
+                        "code": c_code,
+                        "description": result[i]['description'],
+                        "value": total_value,
+                        "is_forecast": True,
+                    })
                     
                     sarima_array.append(total_qty)
                     count += 1 
@@ -532,7 +619,7 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
         for entry in cdata:
             first_record = cdata[0]
             last_record = cdata[-1]
-            
+            c_name=" "
             code = next((doc for doc in allCodes if doc['_id'] == entry["internal_code_id"]), None)
             if code is not None:
                 c_code = code['code']
@@ -578,8 +665,6 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                         if index_value in dimension_list:
                             # index_value exists in the dictionary
                             dimension_list[index_value].extend(item.get("qty"))  # Add or update a new element with the existing key
-                            # Optionally, you can also append a new element to the existing value
-                            # dimension_list[index_value] += " additional_data"
                         else:
                             dimension_list[index_value] = [item.get("qty")]
                             # index_value does not exist in the dictionary
@@ -587,51 +672,38 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
 
                         print(detail)
 
-                        # index_value = index_value + detail.get("value")
-
-                        # asia_index = None
-                        # for key, value in enumerate(dimension_list):
-                        #     print("key :: ", key)
-                        #     print("value :: ", value)
-                        #     if index_value in tpl:
-                        #         asia_index = i
-                        #         break
-
-                        # if asia_index is not None:
-                        #     # If 'Asia' exists, append the string to its value
-                        #     # dimension_list[asia_index] = (dimension_list[asia_index][0], dimension_list[asia_index][1] + f", {item.get("qty")}")
-                        #     dimension_list[asia_index] = (dimension_list[asia_index], dimension_list[asia_index] + f", {item.get("qty")}")
-                        # else:
-                        #     # dimension_list.append((index_value, item.get("qty")))
-                        #     # dimension_list[index_value].append(item.get("qty"))
-                        #     dimension_list[index_value] = item.get("qty")
-                        # print(dimension_list)
-
-                
-            
-
             # Fetch and concatenate narration and url
             narration = entry.get("narration", "")
             url = entry.get("url", "")
-            description = f"{narration} {url}"   
+            description = f"{narration} {url}" 
+            cdata_month_collection.delete_many({
+                "company_code": company_id,
+                "month": entry.get("month", ""),
+                "type_year": int(entry.get("type_year", "")),
+                "reporting_year": reporting_year,
+                "site_code" : str(site_code),
+                "internal_code_id": entry.get("internal_code_id", ""),
+                "code_name": c_name,
+                "code": c_code,
+            })  
             cdata_month_collection.insert_one({
-                            "company_code": company_id,
-                            "month": entry.get("month", ""),
-                            "type_year": int(entry.get("type_year", "")),
-                            "reporting_year": reporting_year,
-                            "qty": int(final_qty),
-                            "site_code" : str(site_code),
-                            "internal_code_id": entry.get("internal_code_id", ""),
-                            "code_name": c_name,
-                            "code": c_code,
-                            "value": entry.get("value", ""),
-                            "currency": entry.get("currency", ""),
-                            "dimension": entry.get("dimension", ""),
-                            "unit": entry.get("unit", ""),
-                            "description": description,
-                            "ref_table": "cdata",
-                            "is_forecast": False
-                        })
+                "company_code": company_id,
+                "month": entry.get("month", ""),
+                "type_year": int(entry.get("type_year", "")),
+                "reporting_year": reporting_year,
+                "qty": int(final_qty),
+                "site_code" : str(site_code),
+                "internal_code_id": entry.get("internal_code_id", ""),
+                "code_name": c_name,
+                "code": c_code,
+                "value": entry.get("value", ""),
+                "currency": entry.get("currency", ""),
+                "dimension": entry.get("dimension", ""),
+                "unit": entry.get("unit", ""),
+                "description": description,
+                "ref_table": "cdata",
+                "is_forecast": False
+            })
             count += 1
             
             qty = final_qty
@@ -642,53 +714,6 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
 
         print(f"dimension_list :: {internal_code_id} ", dimension_list)
         sarima_predictions = []
-        # if len(sarima_array) != 0:
-        #     if len(sarima_array) > 5:
-        #         sarima_predictions = run_sarima(sarima_array, predictedValue=35)
-
-        # if len(sarima_predictions) > 0:
-        #     next_month = last_record['month']
-        #     current_month = last_record['month']
-
-        #     previous_month = last_record['month']
-        #     previous_type_year = int(last_record['type_year'])
-        #     previous_reporting_year = int(last_reporting_year)
-            
-
-        #     next_year = int(last_record['type_year'])
-
-        #     for idx, pred_value in enumerate(sarima_predictions.values()):
-        #         prev_month = next_month
-        #         next_month = get_next_month(next_month)
-        #         current_month = get_next_month_name(previous_month)
-                
-        #         if current_month == "January":
-        #             previous_type_year = previous_type_year + 1
-
-        #         if count == 13:
-        #             previous_reporting_year += 1
-        #             count =  1
-
-        #         cdata_month_collection.insert_one({
-        #             "company_code": company_id,
-        #             "month": current_month,
-        #             "type_year": previous_type_year,
-        #             "reporting_year": previous_reporting_year,
-        #             "qty": round(pred_value),
-        #             "site_code" : str(site_code),
-        #             "internal_code_id": ObjectId(internal_code_id),
-        #             "code_name": c_name,
-        #             "code": c_code,
-        #             "value": 0,
-        #             "description": "",
-        #             "ref_table": "prediction",
-        #             "is_forecast": True
-        #         })
-        #         last_reporting_count += 1
-        #         count += 1
-        #         previous_month = str(current_month)
-
-        
         query = {
                 "company_code": str(company_id),
                 "site_code" : str(site_code),
@@ -698,6 +723,3 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
         # Retrieve the documents matching the query
         result = list(cdata_month_collection.find(query))
 
-        # process_quarterly_data(result, company_id)
-        # process_BiAnnual_data(result, company_id)
-        # process_yearly_data(result, company_id)

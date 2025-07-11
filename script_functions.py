@@ -5,12 +5,10 @@ import pymongo
 import os
 from dotenv import load_dotenv
 from json.decoder import JSONDecodeError
-# from db_connection import connect_to_database
-from quaterly_data import process_quarterly_data
-from bson.objectid import ObjectId  # Import ObjectId for working with MongoDB Object IDs
 from sarima import run_sarima
 from datetime import datetime
 from calendar import month_name
+from bson import ObjectId  # Add this import
 
 
 
@@ -162,6 +160,15 @@ def process_bi_annual_data(company_code, year=None, reporting_frequency=None):
                 name, code = get_code_data(internal_code_id)
 
                 # Insert data into cdata_bi_annual_collection
+                cdata_bi_annual_collection.delete_many({
+                    "company_code": company_code,
+                    "type_year": year_to_process,
+                    "internal_code_id": internal_code_id,
+                    "semester": "semester1",
+                    "months": " - ".join(months_semester1),
+                    "code": code,
+                    "name": name
+                })
                 cdata_bi_annual_collection.insert_many([
                     {
                         "company_code": company_code,
@@ -246,7 +253,14 @@ def process_yearly_data(company_code, year=None, reporting_frequency=None):
                     unit_yearly = first_entry.get("unit", "") if first_entry else ""
 
                     name, code = get_code_data(internal_code_id)
-
+                    cdata_yearly_collection.delete_many({
+                        "company_code": company_code,
+                        "type_year": year,
+                        "internal_code_id": internal_code_id,
+                        "code": code,
+                        "name": name,
+                        "months": " - ".join(months_range),
+                    })
                     cdata_yearly_collection.insert_one({
                         "company_code": company_code,
                         "type_year": year,
@@ -340,6 +354,13 @@ def process_monthly_data(company_code, year=None, start_month=None, reporting_fr
             for entry in year_data:
                 try:
                     name, code = get_code_data(entry["internal_code_id"])
+                    cdata_month_collection.delete_many({
+                        "company_code": company_code,
+                        "type_year": year,
+                        "internal_code_id": entry["internal_code_id"],
+                        "month": entry["month"],
+                        "code": code,
+                    })
                     cdata_month_collection.insert_one({
                         "company_code": company_code,
                         "type_year": year,
@@ -404,8 +425,105 @@ def process_monthly_data(company_code, year=None, start_month=None, reporting_fr
 
         # Insert predictions into cdata_month table
         if batch_data:
+            cdata_month_collection.delete_many({ "company_code": company_code, "type_year": max_year, "month": MONTHS[month_index]})
             cdata_month_collection.insert_many(batch_data)
 
     except Exception as e:
         logger.error("An error occurred while processing monthly data: %s", str(e))
 
+
+def delete_monthly_data(company_code, reporting_month, year, internal_code_id, site_code):
+    client = connect_to_database()  # Assuming connect_to_database() is defined elsewhere
+    db_name = os.getenv("MONGODB_DB_NAME")
+    db = client[db_name]
+    
+    if db is not None:
+        cdata_month_collection = db["cdata_month"]
+        logger.info(f"{company_code}, {reporting_month}, {year}, {internal_code_id}, {site_code}")
+        
+        months = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ]
+
+        # Debug: Check parameter types
+        print(f"Parameter types:")
+        print(f"company_code: {type(company_code)} = {company_code}")
+        print(f"reporting_month: {type(reporting_month)} = {reporting_month}")
+        print(f"year: {type(year)} = {year}")
+        print(f"internal_code_id: {type(internal_code_id)} = {internal_code_id}")
+        print(f"site_code: {type(site_code)} = '{site_code}' (length: {len(str(site_code))})")
+        
+        # Check if site_code is empty and warn
+        if not site_code or site_code.strip() == '':
+            print("WARNING: site_code is empty! This might cause no documents to be found.")
+        
+        # Validate ObjectId
+        try:
+            obj_id = ObjectId(internal_code_id)
+            print(f"Valid ObjectId: {obj_id}")
+        except Exception as e:
+            print(f"Invalid ObjectId: {e}")
+            return 0
+
+        reporting_index = months.index(reporting_month)
+        start_index = months.index(reporting_month)  # Use reporting_month as start month
+
+        # Split into two arrays - ensure they're lists, not sets
+        this_year_months = months[start_index:]  # From reporting_month to December
+        next_year_months = months[:reporting_index + 1]  # From January to reporting_month
+        
+        print(f"this_year_months: {this_year_months}")
+        print(f"next_year_months: {next_year_months}")
+        
+        
+        # Test query first to see what documents exist
+        test_query_current = {
+            "company_code": str(company_code),
+            "internal_code_id": obj_id,
+            "month": {"$in": this_year_months},
+            "site_code": str(site_code),
+            "type_year": int(year)
+        }
+        
+        test_query_next = {
+            "company_code": str(company_code),
+            "internal_code_id": obj_id,
+            "month": {"$in": next_year_months},
+            "site_code": str(site_code),
+            "type_year": int(year + 1)
+        }
+        
+        print(f"Test query current year: {test_query_current}")
+        print(f"Test query next year: {test_query_next}")
+        
+        # Count documents before deletion
+        current_count = cdata_month_collection.count_documents(test_query_current)
+        next_count = cdata_month_collection.count_documents(test_query_next)
+        
+        print(f"Documents found for current year: {current_count}")
+        print(f"Documents found for next year: {next_count}")
+        
+        # If no documents found, check what's actually in the database
+        if current_count == 0 and next_count == 0:
+            print("No documents found. Checking database for similar documents...")
+            sample_docs = cdata_month_collection.find({
+                "company_code": str(company_code),
+                "internal_code_id": obj_id
+            }).limit(5)
+            
+            for doc in sample_docs:
+                print(f"Found doc: company={doc.get('company_code')}, month={doc.get('month')}, year={doc.get('type_year')}, site={doc.get('site_code')}")
+        
+        # Delete for current year (August–December)
+        current_year_result = cdata_month_collection.delete_many(test_query_current)
+        print(f"Current year: {current_year_result.deleted_count} documents deleted!")
+
+        # Delete for next year (January–reporting_month)  
+        next_year_result = cdata_month_collection.delete_many(test_query_next)
+        print(f"Next year: {next_year_result.deleted_count} documents deleted!")
+        
+        return current_year_result.deleted_count + next_year_result.deleted_count
+    else:
+        print("Database connection failed")
+        return 0
