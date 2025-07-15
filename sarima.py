@@ -108,7 +108,7 @@ def run_sarima(pred_array, predictedValue, m=None):
                 sarima_result = model.fit(disp=False)
                 forecast = sarima_result.predict(start=len(series), end=len(series) + predictedValue - 1)
             elif model_type == 'Auto ARIMA':
-                logger.info("Auto Arima:", seasonality_period)
+                logger.info(f"Auto Arima:, {seasonality_period}")
                 model = AutoARIMA(sp=seasonality_period if seasonality_period else 1)
                 model.fit(series)
                 forecast = model.predict(fh=np.arange(1, predictedValue + 1))
