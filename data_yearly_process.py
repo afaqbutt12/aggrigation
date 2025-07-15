@@ -200,7 +200,7 @@ def process_yearly_data(company_id, internal_code_id, year, start_month, site_co
             if start_month == 'January' and first_record['_id'] == entry['_id']:
                 reporting_year = int(entry['type_year'])
             
-            if count == 2:
+            if count == 2 and entry['month'] != '':
                 reporting_year += 1
                 count =  1
 
