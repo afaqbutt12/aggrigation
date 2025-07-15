@@ -15,12 +15,6 @@ load_dotenv()
 
 def process_monthly_data(company_id, internal_code_id, year, start_month, site_code):
     print("Company Details :: ", company_id, internal_code_id, year, start_month, site_code)
-    # MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/")
-    # MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "ensogov")
-
-    # Connect to MongoDB
-    # client = MongoClient(MONGODB_URL)
-    # db = client[MONGODB_DB_NAME]
 
     connection = db_connection.connect_to_database()
     if connection is not None:
@@ -749,7 +743,15 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
         if sarima_predictions is not None and len(sarima_predictions) > 0:
             next_month = last_record['month']
             current_month = last_record['month']
-            c_name = last_record['code_name']
+            c_code = " "
+            c_name = " "
+            code = next((doc for doc in allCodes if doc['_id'] == entry["internal_code_id"]), None)
+            if code is not None:
+                c_code = code['code']
+                c_name = code['name']
+            else:
+                c_code = " "
+                c_name = " "
             previous_month = last_record['month']
             previous_type_year = int(last_record['type_year'])
             previous_reporting_year = int(last_reporting_year)

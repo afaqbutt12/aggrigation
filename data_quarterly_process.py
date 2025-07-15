@@ -28,13 +28,6 @@ def process_quarterly_data(company_id, internal_code_id, year, start_month, site
         code_collection = connection["codes"]
     else:
         print("Database connection is not available.")
-
-    # MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/")
-    # MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "ensogov")
-
-    # # Connect to MongoDB
-    # client = MongoClient(MONGODB_URL)
-    # db = client[MONGODB_DB_NAME]
    
 
     company_id = str(company_id)
@@ -558,7 +551,15 @@ def process_quarterly_data(company_id, internal_code_id, year, start_month, site
             next_year = int(last_record['type_year'])
             last_reporting_year = cdata_last_reporting_year
             last_reporting_count = last_record['quarter']
-            c_name = last_record['code_name']
+            c_code = " "
+            c_name = " "
+            code = next((doc for doc in allCodes if doc['_id'] == entry["internal_code_id"]), None)
+            if code is not None:
+                c_code = code['code']
+                c_name = code['name']
+            else:
+                c_code = " "
+                c_name = " "
             count =  1
             for idx, pred_value in enumerate(sarima_predictions):
                 prev_quarter = last_reporting_count

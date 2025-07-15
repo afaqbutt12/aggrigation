@@ -14,8 +14,8 @@ load_dotenv()
 
 def process_monthly_data(company_id, internal_code_id, year, start_month, site_code):
     print("Company Details :: ", company_id, internal_code_id, year, start_month, site_code)
-    MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/")
-    MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "ensogov")
+    MONGODB_URL = os.getenv("MONGODB_URL", "")
+    MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "")
 
     # Connect to MongoDB
     client = MongoClient(MONGODB_URL)

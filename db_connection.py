@@ -9,8 +9,8 @@ _connection = None
 def connect_to_database():
     try:
         global _connection
-        MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/")
-        MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "ensogov")
+        MONGODB_URL = os.getenv("MONGODB_URL", "")
+        MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "")
 
         if not _connection:
             _connection = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000, directConnection=True)

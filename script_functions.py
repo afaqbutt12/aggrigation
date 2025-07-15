@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Define MongoDB URL from environment variables
-MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/")
+MONGODB_URL = os.getenv("MONGODB_URL", "")
 
 # Establish database connection
 def connect_to_database():
@@ -56,9 +56,6 @@ def fetch_company_data(company_code):
 
 
 def get_internal_code_ids(company_code):
-    # client = connect_to_database()
-    # db = client["ensogov"]
-    # cdata_collection = db["cdata"]
     client = connect_to_database()
     db_name = os.getenv("MONGODB_DB_NAME")
     db = client[db_name]
@@ -67,23 +64,8 @@ def get_internal_code_ids(company_code):
     return data
 
 def connect_to_databaseOne():
-    return pymongo.MongoClient("mongodb://localhost:27017/")
+    return pymongo.MongoClient(MONGODB_URL)
 
-# def get_code_data(internal_code_id):
-#     client = connect_to_database()
-#     db_name = os.getenv("MONGODB_DB_NAME")
-#     db = client[db_name]
-#     codes_collection = db["codes"]
-#     try:
-#         internal_code_id = ObjectId(internal_code_id)  # Convert internal_code_id to ObjectId
-#         code_data = codes_collection.find_one({"_id": internal_code_id})
-#         if code_data:
-#             return code_data.get("name", ""), code_data.get("code", "")
-#         else:
-#             return None, None
-#     except Exception as e:
-#         logger.error("Error converting internal_code_id to ObjectId: %s", str(e))
-#         return None, None
 
 def get_code_data(internal_code_id):
     client = connect_to_database()
