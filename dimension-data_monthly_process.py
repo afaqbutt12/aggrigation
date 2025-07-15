@@ -451,7 +451,7 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
             group = result[i:i+12]
             
             reporting_year = result[i]['reporting_year']
-            if start_month!="" and start_month != 'January' and group[0]['type_year'] == group[0]['reporting_year']:
+            if start_month !="" and start_month != 'January' and group[0]['type_year'] == group[0]['reporting_year']:
                 reporting_year += 1
 
 
@@ -634,7 +634,7 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
             if start_month == 'January' and first_record['_id'] == entry['_id']:
                 reporting_year = int(entry['type_year'])
             
-            if count == 13:
+            if count == 13 and last_record['month'] != "":
                 reporting_year += 1
                 count =  1
 
