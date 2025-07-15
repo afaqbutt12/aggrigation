@@ -373,7 +373,6 @@ def process_monthly_data(company_code, year=None, start_month=None, reporting_fr
         #     index = month_index_map.get(month)
         #     if index is not None:
         #         arima_array[index] = value
-        # print("ARIMA Array: after", arima_array)
         sarima_predictions = run_sarima(sarima_array, predictedValue=23)
 
         # sarima_predictions = run_sarima(sarima_array)  # Assuming run_sarima() returns SARIMA predictions

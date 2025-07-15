@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import logging
 from sktime.forecasting.arima import AutoARIMA
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet, BayesianRidge
 from sklearn.preprocessing import PolynomialFeatures
@@ -11,6 +12,10 @@ from statsmodels.tsa.stattools import acf
 from statsmodels.tsa.seasonal import seasonal_decompose
 import warnings
 warnings.filterwarnings("ignore")  # Suppress all warnings
+# Set up logging configuration
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 def run_sarima(pred_array, predictedValue, m=None):
     def is_repeating_pattern(series):
@@ -86,6 +91,7 @@ def run_sarima(pred_array, predictedValue, m=None):
                 model = AutoReg(series, lags=1).fit()
                 forecast = model.predict(start=len(series), end=len(series) + predictedValue - 1)
             elif model_type == 'ARMA':
+                
                 model = ARIMA(series, order=(1, 0, 1)).fit()
                 forecast = model.predict(start=len(series), end=len(series) + predictedValue - 1)
             elif model_type == 'ARIMA':
@@ -102,6 +108,7 @@ def run_sarima(pred_array, predictedValue, m=None):
                 sarima_result = model.fit(disp=False)
                 forecast = sarima_result.predict(start=len(series), end=len(series) + predictedValue - 1)
             elif model_type == 'Auto ARIMA':
+                logger.info("Auto Arima:", seasonality_period)
                 model = AutoARIMA(sp=seasonality_period if seasonality_period else 1)
                 model.fit(series)
                 forecast = model.predict(fh=np.arange(1, predictedValue + 1))
