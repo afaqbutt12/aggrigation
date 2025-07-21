@@ -254,8 +254,7 @@ class CompanyDataController:
         
         return validated_frequencies
 
-    def _process_company_codes(self, company: Dict, company_codes: List[Dict], 
-                             reporting_frequencies: List[str], year: int, start_month: str) -> List[Dict]:
+    def _process_company_codes(self, company: Dict, company_codes: List[Dict], reporting_frequencies: List[str], year: int, start_month: str) -> List[Dict]:
         """Process all company codes for a company"""
         processed_codes = []
         company_id = str(company['id'])
@@ -270,8 +269,9 @@ class CompanyDataController:
                 # Process each reporting frequency
                 for freq in reporting_frequencies:
                     try:
+                        is_reporting_next = False if len(reporting_frequencies) == 1 else True
                         result = self._process_frequency(
-                            company, company_id, internal_code_id, freq, year, start_month
+                            company, company_id, internal_code_id, freq, year, start_month, is_reporting_next
                         )
                         code_results.append(result)
                         
@@ -299,7 +299,7 @@ class CompanyDataController:
         
         return processed_codes
 
-    def _process_frequency(self, company: Dict, company_id: str, internal_code_id: str, frequency: str, year: int, start_month: str) -> Dict:
+    def _process_frequency(self, company: Dict, company_id: str, internal_code_id: str, frequency: str, year: int, start_month: str, is_reporting_next: bool) -> Dict:
         """Process a specific frequency for a company code"""
         try:
             logger.info(f"Processing {frequency} data for company {company_id}, code {internal_code_id}")
@@ -312,7 +312,7 @@ class CompanyDataController:
             elif frequency == 'semi_annual':
                 self._process_bi_annual(company_id, internal_code_id, year, start_month, company)
             elif frequency == 'annual':
-                self._process_yearly(company_id, internal_code_id, year, start_month, company)
+                self._process_yearly(company_id, internal_code_id, year, start_month, company, is_reporting_next)
             
             return {
                 "frequency": frequency,
@@ -368,11 +368,11 @@ class CompanyDataController:
                 process_BiAnnual_data(company_id, internal_code_id, year, start_month, 
                                     site_code["internal_site_code"])
     
-    def _process_yearly(self, company_id: str, internal_code_id: str, year: int, 
-                       start_month: str, company: Dict):
+    def _process_yearly(self, company_id: str, internal_code_id: str, year: int, start_month: str, company: Dict, is_reporting_next: bool):
         """Process yearly data for a company"""
         # Process main company data
         if all([company_id, internal_code_id, year, start_month]):
+            reporting_month = start_month if is_reporting_next else "January"
             process_yearly_data(company_id, internal_code_id, year, start_month, site_code="")
         
         # Process site data
