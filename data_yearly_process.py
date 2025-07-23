@@ -100,14 +100,17 @@ def process_yearly_data(company_id, internal_code_id, year, start_month, site_co
     def extract_number_from_string(s):
         print("ssss :: ", s)
         if isinstance(s, str):
-            # Use regular expression to find all sequences of digits
-            match = re.findall(r'\d+', s)
+            # Clean the string and extract numeric value
+            cleaned = re.sub(r'[,\s]', '', s)  # Remove commas and spaces
+            match = re.search(r'\d+(?:\.\d+)?', cleaned)  # Find complete number
             
-            # Join the matched numbers to form the final number
-            number = ''.join(match)
-            
-            return int(number) if number else None
+            if match:
+                number_str = match.group(0)
+                # Return as float if decimal, otherwise int
+                return int(float(number_str))
+            return None
         return int(s)
+ 
 
     def safe_int(value, default=0):
         if value is not None and value != "":
