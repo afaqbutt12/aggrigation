@@ -194,16 +194,16 @@ def process_yearly_data(company_id, internal_code_id, year, start_month, site_co
                 c_code = " "
                 c_name = " "
                 
-            if start_month != 'January' and first_record['_id'] == entry['_id']:
-                reporting_year = int(entry['type_year']) + 1
+            # if start_month != 'January' and first_record['_id'] == entry['_id']:
+            #     reporting_year = int(entry['type_year']) + 1
             
-            if start_month == 'January' and first_record['_id'] == entry['_id']:
-                reporting_year = int(entry['type_year'])
+            # if start_month == 'January' and first_record['_id'] == entry['_id']:
+            #     reporting_year = int(entry['type_year'])
             
-            if count == 2 and entry['month'] != '':
-                reporting_year += 1
-                count =  1
-
+            # if count == 2 and entry['month'] != '':
+            #     reporting_year += 1
+            #     count =  1
+            reporting_year= int(entry.get("type_year", ""))
             if last_record['_id'] == entry['_id']:
                 last_reporting_count = count
                 last_reporting_year = reporting_year

@@ -269,7 +269,7 @@ class CompanyDataController:
                 # Process each reporting frequency
                 for freq in reporting_frequencies:
                     try:
-                        is_reporting_next = False if len(reporting_frequencies) == 1 else True
+                        is_reporting_next = False if len(reporting_frequencies) == 4 else True
                         result = self._process_frequency(
                             company, company_id, internal_code_id, freq, year, start_month, is_reporting_next
                         )
