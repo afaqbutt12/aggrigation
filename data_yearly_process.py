@@ -97,7 +97,9 @@ def process_yearly_data(company_id, internal_code_id, year, start_month, site_co
         # Return the name of the next month
         return months[next_month_index]
     
-    if isinstance(s, str):
+    def extract_number_from_string(s):
+        print("ssss :: ", s)
+        if isinstance(s, str):
             # Clean the string and extract numeric value
             cleaned = re.sub(r'[,\s]', '', s)  # Remove commas and spaces
             match = re.search(r'\d+(?:\.\d+)?', cleaned)  # Find complete number
@@ -108,6 +110,7 @@ def process_yearly_data(company_id, internal_code_id, year, start_month, site_co
                 return int(float(number_str))
             return None
         return int(s)
+ 
 
     def safe_int(value, default=0):
         if value is not None and value != "":
