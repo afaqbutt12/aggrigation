@@ -373,14 +373,13 @@ class CompanyDataController:
         # Process main company data
         if all([company_id, internal_code_id, year, start_month]):
             reporting_month = start_month if is_reporting_next else "January"
-            process_yearly_data(company_id, internal_code_id, year, start_month, site_code="")
+            process_yearly_data(company_id, internal_code_id, year, reporting_month, site_code="")
         
         # Process site data
         for site_code in company.get('company_sites', []):
             if (all([company_id, internal_code_id, year, start_month]) and 
                 site_code.get("internal_site_code")):
-                process_yearly_data(company_id, internal_code_id, year, start_month, 
-                                  site_code["internal_site_code"])
+                process_yearly_data(company_id, internal_code_id, year, reporting_month, site_code["internal_site_code"])
 
 def main(company_id: Optional[int] = None) -> Dict[str, Any]:
     """
