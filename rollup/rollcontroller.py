@@ -1,8 +1,32 @@
 import json
 import copy
+import sys
+import argparse
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+from dotenv import load_dotenv
+import logging
+import traceback
+from datetime import date, datetime
+from pymongo import MongoClient
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from RegionAPI import fetch_company_data_safe as fetch_company_data, fetch_all_company
+import db_connection
+from typing import Optional, Dict, List, Any
 
+load_dotenv()
+
+# Configure logging with more detailed format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('company_processing.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 class SiteDataRollup:
     def __init__(self):
         """Initialize the controller with database connection"""
@@ -14,7 +38,7 @@ class SiteDataRollup:
                 self.processed_combinations = set()  # Track processed (site_code, year, internal_code_id)
                 logger.info("Database connection established successfully")
             else:
-# sourcery skip: raise-specific-error
+                # sourcery skip: raise-specific-error
                 raise Exception("Database connection is not available.")
         except Exception as e:
             logger.error(f"Failed to initialize database connection: {str(e)}")
@@ -277,23 +301,23 @@ class SiteDataRollup:
         try:
             logger.info(f"Processing {frequency} data for company {company_id}, code {internal_code_id}")
             # Process main company data
-            if frequency == 'month':
-                logger.info(f"Processing code {start_month}, code {year}")
-                # Process the rollup
-                self.process_rollup(
-                    site_data, 
-                    sample_cdata, 
-                    year, 
-                    internal_code_id,
-                    company_id
-                )
-                self._process_monthly(company_id, internal_code_id, year, start_month, company)
-            elif frequency == 'quater':
-                self._process_quarterly(company_id, internal_code_id, year, start_month, company)
-            elif frequency == 'semi_annual':
-                self._process_bi_annual(company_id, internal_code_id, year, start_month, company)
-            elif frequency == 'annual':
-                self._process_yearly(company_id, internal_code_id, year, start_month, company, is_reporting_next)
+            # if frequency == 'month':
+            #     logger.info(f"Processing code {start_month}, code {year}")
+            #     # Process the rollup
+            #     self.process_rollup(
+            #         site_data, 
+            #         sample_cdata, 
+            #         year, 
+            #         internal_code_id,
+            #         company_id
+            #     )
+            #     self._process_monthly(company_id, internal_code_id, year, start_month, company)
+            # elif frequency == 'quater':
+            #     self._process_quarterly(company_id, internal_code_id, year, start_month, company)
+            # elif frequency == 'semi_annual':
+            #     self._process_bi_annual(company_id, internal_code_id, year, start_month, company)
+            # elif frequency == 'annual':
+            #     self._process_yearly(company_id, internal_code_id, year, start_month, company, is_reporting_next)
             
             return {
                 "frequency": frequency,
@@ -467,6 +491,35 @@ class SiteDataRollup:
         
         return processed_companies
 
+    def _get_companies_to_process(self, company_id: Optional[int]) -> List[Dict]:
+        """Get companies to process based on company_id parameter"""
+        try:
+            all_companies = fetch_all_company()
+            
+            if not all_companies:
+                logger.error("Failed to fetch companies from API")
+                return []
+                
+            logger.info(f"Fetched {len(all_companies)} total companies from API")
+            
+            if company_id is not None:
+                # Process specific company
+                company = next((c for c in all_companies if c['id'] == company_id), None)
+                if company:
+                    logger.info(f"Found company with ID {company_id}: {company.get('company_name', 'Unknown')}")
+                    return [company]
+                else:
+                    logger.warning(f"Company with ID {company_id} not found")
+                    return []
+            else:
+                # Process all companies
+                logger.info("Processing all companies")
+                return all_companies
+                
+        except Exception as e:
+            logger.error(f"Error fetching companies: {str(e)}")
+            return []
+
     def process_company_data(self, company_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Process company data for a specific company or all companies
@@ -556,7 +609,7 @@ def main(company_id: Optional[int] = None) -> Dict[str, Any]:
         company_id = args.company_id
     
     try:
-        controller = CompanyDataController()
+        controller = SiteDataRollup()
         result = controller.process_company_data(company_id=company_id)
         
         if result["success"]:
