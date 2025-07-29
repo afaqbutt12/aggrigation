@@ -2,7 +2,6 @@ import json
 import copy
 import sys
 import argparse
-from bson.objectid import ObjectId
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
@@ -16,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from RegionAPI import fetch_company_data_safe as fetch_company_data, fetch_all_company
 import db_connection
 from typing import Optional, Dict, List, Any
+from bson import ObjectId
 
 load_dotenv()
 
@@ -36,20 +36,40 @@ class SiteDataRollup:
         try:
             self.connection = db_connection.connect_to_database()
             if self.connection is not None:
+                db_name = self.connection.name if hasattr(self.connection, 'name') else str(self.connection)
+                logger.info(f"Connected to MongoDB database: {db_name}")
+                print(f"Connected to MongoDB database: {db_name}")
                 self.company_code_collection = self.connection["company_codes"]
-                self.new_rollup_table = self.connection["rollup_yearly"]
+                self.new_rollup_table = []
                 self.cdata_monthly = self.connection["cdata_monthly"]
                 self.cdata_yearly = self.connection["cdata_yearly"]
                 self.cdata_quarterly = self.connection["cdata_quarterly"]
                 self.cdata_bi_annual = self.connection["cdata_bi_annual"]
                 self.processed_combinations = set()  # Track processed (site_code, year, internal_code_id)
+                self.new_rollup_table_mongo = self.connection["rollup_yearly"]
                 logger.info("Database connection established successfully")
+                self._test_rollup_collection_creation()
             else:
                 # sourcery skip: raise-specific-error
                 raise Exception("Database connection is not available.")
         except Exception as e:
             logger.error(f"Failed to initialize database connection: {str(e)}")
             raise
+    
+    def _test_rollup_collection_creation(self):
+        """
+        Test if the rollup_yearly collection can be created and is writable.
+        Inserts a dummy document and removes it.
+        """
+        try:
+            test_doc = {"test": "collection_creation", "_temp": True}
+            result = self.new_rollup_table_mongo.insert_one(test_doc)
+            logger.info(f"Test insert into rollup_yearly succeeded. Inserted ID: {result.inserted_id}")
+            # Clean up
+            self.new_rollup_table_mongo.delete_one({"_id": result.inserted_id})
+            logger.info("Test document removed from rollup_yearly.")
+        except Exception as e:
+            logger.error(f"Test insert into rollup_yearly failed: {str(e)}")
     
     def fetch_site_data(self, company_id: str) -> Optional[Dict]:
         """
@@ -126,40 +146,34 @@ class SiteDataRollup:
         Returns only ONE record - the most recently updated one
         """
         matching_records = []
-
         for cdata in cdata_list:
             # Match site_code, year, and internal_code_id
             cdata_year = cdata.get('type_year') or cdata.get('reporting_year')
             internal_code_id_field = cdata.get('internal_code_id', '')
-            cdata_internal_id=""
             if isinstance(internal_code_id_field, ObjectId):
                 cdata_internal_id = str(internal_code_id_field)
+            elif isinstance(internal_code_id_field, dict):
+                cdata_internal_id = str(internal_code_id_field.get('$oid', ''))
             else:
                 cdata_internal_id = str(internal_code_id_field)
-            print(f"check condition {cdata.get('site_code') == site_code} year for{year} {cdata_year == year}, using code {internal_code_id} {cdata_internal_id == internal_code_id}")
-
-            if (cdata.get('site_code') == site_code and 
+            if (
+                cdata.get('site_code') == site_code and 
                 cdata_year == year and 
-                cdata_internal_id == internal_code_id):
+                cdata_internal_id == internal_code_id
+            ):
                 matching_records.append(cdata)
-        
         if not matching_records:
             return None
-        
-        # If only one record, return it
         if len(matching_records) == 1:
             return matching_records[0]
-        
         # Multiple records found - pick the latest updated one
         latest_record = matching_records[0]
-        latest_date = self.parse_date(latest_record.get('created_at'))
-        
+        latest_date = self.parse_date(latest_record.get('created_at') or latest_record.get('updated_at'))
         for record in matching_records[1:]:
-            record_date = self.parse_date(record.get('created_at'))
+            record_date = self.parse_date(record.get('created_at') or record.get('updated_at'))
             if record_date and (not latest_date or record_date > latest_date):
                 latest_record = record
                 latest_date = record_date
-        
         print(f"    Found {len(matching_records)} records for {site_code}, using latest updated record")
         return latest_record
     
@@ -317,6 +331,47 @@ class SiteDataRollup:
         
         return result
     
+    def save_rollup_to_db(self):
+        """
+        Save the current rollup table to the MongoDB rollup_yearly collection.
+        Handles conversion of any non-serializable fields.
+        """
+        import uuid
+        db_name = self.connection.name if hasattr(self.connection, 'name') else str(self.connection)
+        print(f"[DEBUG] Using database: {db_name}, collection: rollup_yearly")
+        logger.info(f"save_rollup_to_db called. new_rollup_table length: {len(self.new_rollup_table)}")
+        print(f"save_rollup_to_db called. new_rollup_table length: {len(self.new_rollup_table)}")
+        if not self.new_rollup_table:
+            logger.info("No rollup records to save.")
+            print("No rollup records to save.")
+            return
+        try:
+            # Prepare records for MongoDB (remove any problematic fields)
+            records_to_insert = []
+            for i, record in enumerate(self.new_rollup_table):
+                rec = dict(record)
+                rec.pop('_id', None)
+                # Add a unique field for this test run
+                rec['rollup_insert_uuid'] = str(uuid.uuid4())
+                records_to_insert.append(rec)
+            logger.info(f"Attempting to insert {len(records_to_insert)} records into rollup_yearly.")
+            print(f"Attempting to insert {len(records_to_insert)} records into rollup_yearly.")
+            # Print all records (up to 10)
+            for idx, rec in enumerate(records_to_insert[:10]):
+                print(f"Record {idx+1}: {rec}")
+            if len(records_to_insert) > 10:
+                print(f"... {len(records_to_insert)-10} more records not shown ...")
+            result = self.new_rollup_table_mongo.insert_many(records_to_insert)
+            logger.info(f"Inserted {len(result.inserted_ids)} rollup records into rollup_yearly.")
+            print(f"Inserted {len(result.inserted_ids)} rollup records into rollup_yearly.")
+            print(f"[DEBUG] Inserted IDs: {result.inserted_ids}")
+            # Print count after insert
+            count = self.new_rollup_table_mongo.count_documents({})
+            print(f"[DEBUG] rollup_yearly document count after insert: {count}")
+        except Exception as e:
+            logger.error(f"Failed to insert rollup records: {str(e)}")
+            print(f"Failed to insert rollup records: {str(e)}")
+    
     def process_rollup(self, site_data: Dict, cdata_list: List[Dict], year: int, internal_code_id: str):
         """
         Main entry point for rollup processing
@@ -334,6 +389,9 @@ class SiteDataRollup:
         print("\n" + "="*80)
         print(f"Rollup completed! Created {len(self.new_rollup_table)} records")
         print(f"Root site total contribution: qty={root_result['own_contribution']['qty']:.2f}, value={root_result['own_contribution']['value']:.2f}")
+        
+        # Save all rollup records to MongoDB
+        self.save_rollup_to_db()
     
     def get_rollup_table(self) -> List[Dict]:
         """
@@ -390,10 +448,31 @@ class SiteDataRollup:
             for record in self.new_rollup_table
         ]
     
-    def _process_frequency(self, company: Dict, company_id: str, site_data: List[Dict], internal_code_id: str, frequency: str, year: int, start_month: str, is_reporting_next: bool) -> Dict:
+    def force_test_insert(self):
+        """
+        Force a test insert of a dummy rollup record into the rollup_yearly collection.
+        """
+        try:
+            test_record = {
+                "company_code": "test_company",
+                "type_year": 2099,
+                "site_code": "TEST_SITE",
+                "rollup_qty": 123.45,
+                "rollup_value": 678.90,
+                "inserted_by": "force_test_insert"
+            }
+            result = self.new_rollup_table_mongo.insert_one(test_record)
+            logger.info(f"Force test insert succeeded. Inserted ID: {result.inserted_id}")
+        except Exception as e:
+            logger.error(f"Force test insert failed: {str(e)}")
+    
+    def _process_frequency(self, company: Dict, company_id: str, internal_code_id: str, frequency: str, year: int, start_month: str, is_reporting_next: bool) -> Dict:
         """Process a specific frequency for a company code"""
         try:
             logger.info(f"Processing {frequency} data for company {company_id}, code {internal_code_id}")
+            
+            # Fetch site data for the company
+            site_data = self.fetch_site_data(company_id)
             
             if not site_data:
                 logger.warning(f"Could not fetch site data for company {company_id}. Skipping {frequency} data.")
@@ -406,49 +485,45 @@ class SiteDataRollup:
             # Process main company data
             if frequency == 'month':
                 # Read cdata monthly from db
-                sample_cdata = list(self.cdata_monthly.find({"company_code": str(company_id), "reporting_year": year, "internal_code_id": ObjectId(internal_code_id)}))
+                sample_cdata = list(self.cdata_monthly.find({"company_id": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
                 logger.info(f"Processing monthly data for year {year}, internal_code_id {internal_code_id}")
                 # Process the rollup
-                if len(sample_cdata):
-                    self.process_rollup(
-                        site_data, 
-                        sample_cdata, 
-                        year, 
-                        internal_code_id
-                    )
+                self.process_rollup(
+                    site_data, 
+                    sample_cdata, 
+                    year, 
+                    internal_code_id
+                )
             elif frequency == 'quater':
-                sample_cdata = list(self.cdata_quarterly.find({"company_code": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
+                sample_cdata = list(self.cdata_quarterly.find({"company_id": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
                 logger.info(f"Processing quarterly data for year {year}, internal_code_id {internal_code_id}")
                 # Process the rollup
-                if len(sample_cdata):
-                    self.process_rollup(
-                        site_data, 
-                        sample_cdata, 
-                        year, 
-                        internal_code_id
-                    )
+                self.process_rollup(
+                    site_data, 
+                    sample_cdata, 
+                    year, 
+                    internal_code_id
+                )
             elif frequency == 'semi_annual':
-                sample_cdata = list(self.cdata_bi_annual.find({"company_code": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
+                sample_cdata = list(self.cdata_bi_annual.find({"company_id": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
                 logger.info(f"Processing semi-annual data for year {year}, internal_code_id {internal_code_id}")
                 # Process the rollup
-                if len(sample_cdata):
-                    self.process_rollup(
-                        site_data, 
-                        sample_cdata, 
-                        year, 
-                        internal_code_id
-                    )
+                self.process_rollup(
+                    site_data, 
+                    sample_cdata, 
+                    year, 
+                    internal_code_id
+                )
             elif frequency == 'annual':
-                sample_cdata = list(self.cdata_yearly.find({"company_code": str(company_id), "type_year": int(year), "internal_code_id": ObjectId(internal_code_id)}))
-                logger.info(f"Processing annual data for {company_id} for year {year}, internal_code_id {internal_code_id} records {len(sample_cdata)}")
+                sample_cdata = list(self.cdata_yearly.find({"company_id": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
+                logger.info(f"Processing annual data for year {year}, internal_code_id {internal_code_id}")
                 # Process the rollup
-                if len(sample_cdata):
-                    self.process_rollup(
-                        site_data, 
-                        sample_cdata, 
-                        year, 
-                        internal_code_id
-                    )
+                self.process_rollup(
+                    site_data, 
+                    sample_cdata, 
+                    year, 
+                    internal_code_id
+                )
             
             return {
                 "frequency": frequency,
@@ -490,8 +565,7 @@ class SiteDataRollup:
         """Process all company codes for a company"""
         processed_codes = []
         company_id = str(company['id'])
-        # Fetch site data for the company
-        site_data = self.fetch_site_data(company_id)
+        
         for company_code in company_codes:
             try:
                 internal_code_id = company_code['internal_code_id']
@@ -504,7 +578,7 @@ class SiteDataRollup:
                     try:
                         is_reporting_next = False if len(reporting_frequencies) == 4 else True
                         result = self._process_frequency(
-                            company, company_id, site_data, internal_code_id, freq, year, start_month, is_reporting_next
+                            company, company_id, internal_code_id, freq, year, start_month, is_reporting_next
                         )
                         code_results.append(result)
                         
@@ -669,7 +743,7 @@ class SiteDataRollup:
             # Get the current date and calculate year range
             current_date = date.today()
             current_year = int(current_date.strftime("%Y"))
-            year = 2025#current_year - 6
+            year = current_year - 6
             
             logger.info(f"Processing data from year {year} to {current_year}")
             logger.info(f"Target company_id: {company_id}")
