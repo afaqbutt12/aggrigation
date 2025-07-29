@@ -6,16 +6,16 @@ from bson.objectid import ObjectId
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
+from typing import Optional, Dict, List, Any
 import logging
 import traceback
 from datetime import date, datetime
 from pymongo import MongoClient
 import os
-import requests
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from RegionAPI import fetch_company_data_safe as fetch_company_data, fetch_all_company
 import db_connection
-from typing import Optional, Dict, List, Any
+from convertSitestoHerarical import convert_flat_sites_to_hierarchy
 
 load_dotenv()
 
@@ -29,7 +29,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
 class SiteDataRollup:
     def __init__(self):
         """Initialize the controller with database connection"""
@@ -37,11 +36,16 @@ class SiteDataRollup:
             self.connection = db_connection.connect_to_database()
             if self.connection is not None:
                 self.company_code_collection = self.connection["company_codes"]
-                self.new_rollup_table = self.connection["rollup_yearly"]
-                self.cdata_monthly = self.connection["cdata_monthly"]
+                self.rollup_yearly = self.connection["rollup_yearly"]
+                self.rollup_bi_annual = self.connection["rollup_bi_annual"]
+                self.rollup_quarter = self.connection["rollup_quarter"]
+                self.rollup_monthly = self.connection["rollup_monthly"]
+                
                 self.cdata_yearly = self.connection["cdata_yearly"]
-                self.cdata_quarterly = self.connection["cdata_quarterly"]
                 self.cdata_bi_annual = self.connection["cdata_bi_annual"]
+                self.cdata_quarter = self.connection["cdata_quarter"]
+                self.cdata_monthly = self.connection["cdata_monthly"]
+                
                 self.processed_combinations = set()  # Track processed (site_code, year, internal_code_id)
                 logger.info("Database connection established successfully")
             else:
@@ -51,115 +55,20 @@ class SiteDataRollup:
             logger.error(f"Failed to initialize database connection: {str(e)}")
             raise
     
-    def fetch_site_data(self, company_id: str) -> Optional[Dict]:
-        """
-        Fetch site data from the API and build hierarchical structure
-        """
-        try:
-            api_url = f"https://stagging-region.spectreco.com/api/companies/{company_id}/sites"
-            logger.info(f"Fetching site data from: {api_url}")
-            
-            response = requests.get(api_url, timeout=30)
-            if response.status_code != 200:
-                logger.error(f"Failed to fetch site data. Status: {response.status_code}")
-                return None
-            
-            data = response.json()
-            if not data.get('success') or data.get('code') != 200:
-                logger.error(f"API returned error: {data}")
-                return None
-            
-            sites = data.get('data', [])
-            if not sites:
-                logger.warning(f"No sites found for company {company_id}")
-                return None
-            
-            # Build hierarchical structure
-            site_dict = {}
-            root_sites = []
-            
-            # First pass: create site dictionary
-            for site in sites:
-                site_id = site['id']
-                site_dict[site_id] = {
-                    **site,
-                    'sites': []  # Initialize children array
-                }
-            
-            # Second pass: build hierarchy
-            for site in sites:
-                site_id = site['id']
-                parent_site_code = site.get('parentSiteCode')
-                
-                if parent_site_code:
-                    # Find parent by internal_site_code
-                    parent_site = None
-                    for s in sites:
-                        if s['internal_site_code'] == parent_site_code:
-                            parent_site = s
-                            break
-                    
-                    if parent_site and parent_site['id'] in site_dict:
-                        site_dict[parent_site['id']]['sites'].append(site_dict[site_id])
-                    else:
-                        # Parent not found, treat as root
-                        root_sites.append(site_dict[site_id])
-                else:
-                    # No parent, this is a root site
-                    root_sites.append(site_dict[site_id])
-            
-            # Return the first root site (assuming single root structure)
-            if root_sites:
-                logger.info(f"Built site hierarchy with {len(sites)} sites, {len(root_sites)} root sites")
-                return root_sites[0]  # Return the main root site
-            else:
-                logger.warning("No root sites found")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error fetching site data for company {company_id}: {str(e)}")
-            return None
-    
-    def find_latest_cdata_for_site(self, cdata_list: List[Dict], site_code: str, year: int, internal_code_id: str) -> Optional[Dict]:
+    def find_latest_cdata_for_site(self, site_code: str, year: int, company_code: str, internal_code_id: str) -> Optional[Dict]:
+        # sourcery skip: remove-unnecessary-cast
         """
         Find the latest updated cdata record for a specific site, year, and internal_code_id combination
         Returns only ONE record - the most recently updated one
         """
-        matching_records = []
-
-        for cdata in cdata_list:
-            # Match site_code, year, and internal_code_id
-            cdata_year = cdata.get('type_year') or cdata.get('reporting_year')
-            internal_code_id_field = cdata.get('internal_code_id', '')
-            cdata_internal_id=""
-            if isinstance(internal_code_id_field, ObjectId):
-                cdata_internal_id = str(internal_code_id_field)
-            else:
-                cdata_internal_id = str(internal_code_id_field)
-            print(f"check condition {cdata.get('site_code') == site_code} year for{year} {cdata_year == year}, using code {internal_code_id} {cdata_internal_id == internal_code_id}")
-
-            if (cdata.get('site_code') == site_code and 
-                cdata_year == year and 
-                cdata_internal_id == internal_code_id):
-                matching_records.append(cdata)
-        
-        if not matching_records:
-            return None
-        
-        # If only one record, return it
-        if len(matching_records) == 1:
-            return matching_records[0]
-        
-        # Multiple records found - pick the latest updated one
-        latest_record = matching_records[0]
-        latest_date = self.parse_date(latest_record.get('created_at'))
-        
-        for record in matching_records[1:]:
-            record_date = self.parse_date(record.get('created_at'))
-            if record_date and (not latest_date or record_date > latest_date):
-                latest_record = record
-                latest_date = record_date
-        
+        print(f"tesing purpose {company_code} records for {site_code}, using latest updated record for {internal_code_id}")
+        matching_record = cdata_yearly.find_one({
+            "company_code": str(company_code),
+            "site_code": str(site_code),
+            "type_year": int(year),
+            "internal_code_id": objectId(internal_code_id)
+            
+        }) 
         print(f"    Found {len(matching_records)} records for {site_code}, using latest updated record")
         return latest_record
     
@@ -195,18 +104,14 @@ class SiteDataRollup:
         # Add rollup fields
         new_record['rollup_qty'] = rollup_qty
         new_record['rollup_value'] = rollup_value
-        ownership_value = site.get('ownership', 100)
-        # Handle ownership as string or number
-        if isinstance(ownership_value, str):
-            ownership_value = float(ownership_value) if ownership_value.isdigit() else 100
-        new_record['site_ownership'] = ownership_value
+        new_record['site_ownership'] = site.get('ownership', 100)
         new_record['site_id'] = site['id']
         new_record['rollup_processed_at'] = {'$date': datetime.now().isoformat()}
         new_record['rollup_processed'] = True
         
         return new_record
     
-    def rollup_recursive(self, site: Dict, cdata_list: List[Dict], year: int, internal_code_id: str, level: int = 0) -> Dict:
+    def rollup_recursive(self, site: Dict, cdata_list: List[Dict], year: int, company_id: int, internal_code_id: str, level: int = 0) -> Dict:
         """
         Efficient recursive function that processes sites and cdata in one pass
         Returns: {
@@ -214,21 +119,21 @@ class SiteDataRollup:
             'total_rollup': {'qty': x, 'value': y}       # Total rollup from all children
         }
         """
-        site_cdata = self.find_latest_cdata_for_site(cdata_list, site['internal_site_code'], year, internal_code_id)
+        site_cdata = self.find_latest_cdata_for_site(site_code, year, internal_code_id)
         indent = "  " * level
         site_code = site['internal_site_code']
         parent_qty= 0
         parent_value= 0
         if(site_cdata):   
-            parent_qty= site_cdata.get(' qty ', 0) or site_cdata.get('qty', 0)
-            parent_value= site_cdata.get('value', 0)
+            parent_qty= site_cdata['qty']
+            parent_value= site_cdata['value']
         
         print(f"{indent}Processing site: {site_code} (Level {level})")
         
         # Initialize return values
         result = {
             'own_contribution': {'qty': 0, 'value': 0},
-            'total_rollup': {'qty': 0, 'value': 0}
+            'total_rollup': {'qty': parent_qty, 'value': parent_value}
         }
         
         # Step 1: Process all children first (post-order traversal)
@@ -238,7 +143,7 @@ class SiteDataRollup:
         if 'sites' in site and site['sites']:
             print(f"{indent}  Processing {len(site['sites'])} child sites...")
             for child_site in site['sites']:
-                child_result = self.rollup_recursive(child_site, cdata_list, year, internal_code_id, level + 1)
+                child_result = self.rollup_recursive(child_site, cdata_list, year, company_id, internal_code_id, level + 1)
                 
                 # Accumulate child contributions
                 total_child_rollup_qty += child_result['own_contribution']['qty']
@@ -254,7 +159,7 @@ class SiteDataRollup:
                 print(f"{indent}  Found cdata for site {site_code}")
                 
                 # Get original values
-                original_qty = float(site_cdata.get(' qty ', 0) or site_cdata.get('qty', 0) or 0)
+                original_qty = float(site_cdata.get('qty', 0) or 0)
                 original_value = float(site_cdata.get('value', 0) or 0)
                 
                 # Create rollup record with original data + rollup from children
@@ -273,11 +178,7 @@ class SiteDataRollup:
                 
                 # Calculate this site's contribution to its parent
                 # Contribution = (original + rollup from children) * ownership
-                ownership_value = site.get('ownership', 100)
-                # Handle ownership as string or number
-                if isinstance(ownership_value, str):
-                    ownership_value = float(ownership_value) if ownership_value.isdigit() else 100
-                ownership_factor = ownership_value / 100.0
+                ownership_factor = site.get('ownership', 100) / 100.0
                 
                 total_qty_contribution = (original_qty + total_child_rollup_qty) * ownership_factor
                 total_value_contribution = (original_value + total_child_rollup_value) * ownership_factor
@@ -294,11 +195,7 @@ class SiteDataRollup:
                 
                 # No own cdata, just pass through children's contributions with ownership applied
                 if total_child_rollup_qty > 0 or total_child_rollup_value > 0:
-                    ownership_value = site.get('ownership', 100)
-                    # Handle ownership as string or number
-                    if isinstance(ownership_value, str):
-                        ownership_value = float(ownership_value) if ownership_value.isdigit() else 100
-                    ownership_factor = ownership_value / 100.0
+                    ownership_factor = site.get('ownership', 100) / 100.0
                     
                     result['own_contribution'] = {
                         'qty': total_child_rollup_qty * ownership_factor,
@@ -309,7 +206,7 @@ class SiteDataRollup:
         else:
             print(f"{indent}  Site {site_code} already processed for this combination")
         
-        # Store total rollup for reference (sum of children's rollup)
+        # Store total rollup for reference
         result['total_rollup'] = {
             'qty': total_child_rollup_qty,
             'value': total_child_rollup_value
@@ -317,7 +214,7 @@ class SiteDataRollup:
         
         return result
     
-    def process_rollup(self, site_data: Dict, cdata_list: List[Dict], year: int, internal_code_id: str):
+    def process_rollup(self, site_data: Dict, year: int, internal_code_id: str, company_id: str):
         """
         Main entry point for rollup processing
         """
@@ -329,7 +226,7 @@ class SiteDataRollup:
         self.processed_combinations = set()
         
         # Start recursive processing from root
-        root_result = self.rollup_recursive(site_data, cdata_list, year, internal_code_id)
+        root_result = self.rollup_recursive(site_data, cdata_list, year, company_id, internal_code_id)
         
         print("\n" + "="*80)
         print(f"Rollup completed! Created {len(self.new_rollup_table)} records")
@@ -390,70 +287,32 @@ class SiteDataRollup:
             for record in self.new_rollup_table
         ]
     
-    def _process_frequency(self, company: Dict, company_id: str, site_data: List[Dict], internal_code_id: str, frequency: str, year: int, start_month: str, is_reporting_next: bool) -> Dict:
+    def _process_frequency(self, company: Dict, company_id: str, internal_code_id: str, frequency: str, year: int, start_month: str, is_reporting_next: bool, site_data: Dict) -> Dict:
         """Process a specific frequency for a company code"""
         try:
             logger.info(f"Processing {frequency} data for company {company_id}, code {internal_code_id}")
-            
-            if not site_data:
-                logger.warning(f"Could not fetch site data for company {company_id}. Skipping {frequency} data.")
-                return {
-                    "frequency": frequency,
-                    "status": "warning",
-                    "message": f"Could not fetch site data for company {company_id}. Skipping {frequency} data."
-                }
-            
             # Process main company data
             if frequency == 'month':
-                # Read cdata monthly from db
-                sample_cdata = list(self.cdata_monthly.find({"company_code": str(company_id), "reporting_year": year, "internal_code_id": ObjectId(internal_code_id)}))
-                logger.info(f"Processing monthly data for year {year}, internal_code_id {internal_code_id}")
+                logger.info(f"Processing code {start_month}, code {year}")
                 # Process the rollup
-                if len(sample_cdata):
-                    self.process_rollup(
-                        site_data, 
-                        sample_cdata, 
-                        year, 
-                        internal_code_id
-                    )
-            elif frequency == 'quater':
-                sample_cdata = list(self.cdata_quarterly.find({"company_code": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
-                logger.info(f"Processing quarterly data for year {year}, internal_code_id {internal_code_id}")
-                # Process the rollup
-                if len(sample_cdata):
-                    self.process_rollup(
-                        site_data, 
-                        sample_cdata, 
-                        year, 
-                        internal_code_id
-                    )
-            elif frequency == 'semi_annual':
-                sample_cdata = list(self.cdata_bi_annual.find({"company_code": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
-                logger.info(f"Processing semi-annual data for year {year}, internal_code_id {internal_code_id}")
-                # Process the rollup
-                if len(sample_cdata):
-                    self.process_rollup(
-                        site_data, 
-                        sample_cdata, 
-                        year, 
-                        internal_code_id
-                    )
-            elif frequency == 'annual':
-                sample_cdata = list(self.cdata_yearly.find({"company_code": str(company_id), "type_year": int(year), "internal_code_id": ObjectId(internal_code_id)}))
-                logger.info(f"Processing annual data for {company_id} for year {year}, internal_code_id {internal_code_id} records {len(sample_cdata)}")
-                # Process the rollup
-                if len(sample_cdata):
-                    self.process_rollup(
-                        site_data, 
-                        sample_cdata, 
-                        year, 
-                        internal_code_id
-                    )
+                self.process_rollup(
+                    site_data,
+                    year, 
+                    internal_code_id,
+                    company_id
+                )
+            #     self._process_monthly(company_id, internal_code_id, year, start_month, company)
+            # elif frequency == 'quater':
+            #     self._process_quarterly(company_id, internal_code_id, year, start_month, company)
+            # elif frequency == 'semi_annual':
+            #     self._process_bi_annual(company_id, internal_code_id, year, start_month, company)
+            # elif frequency == 'annual':
+            #     self._process_yearly(company_id, internal_code_id, year, start_month, company, is_reporting_next)
             
             return {
                 "frequency": frequency,
                 "status": "success",
-                "sites_processed": len(site_data.get('sites', [])) if site_data else 0
+                "sites_processed": len(company.get('company_sites', []))
             }
             
         except Exception as e:
@@ -490,12 +349,11 @@ class SiteDataRollup:
         """Process all company codes for a company"""
         processed_codes = []
         company_id = str(company['id'])
-        # Fetch site data for the company
-        site_data = self.fetch_site_data(company_id)
+        
+        site_data = convert_flat_sites_to_hierarchy(company.get('company_sites', []))
         for company_code in company_codes:
             try:
                 internal_code_id = company_code['internal_code_id']
-                logger.info(f"Processing code {internal_code_id} for company {company_id}")
                 
                 code_results = []
                 
@@ -503,8 +361,9 @@ class SiteDataRollup:
                 for freq in reporting_frequencies:
                     try:
                         is_reporting_next = False if len(reporting_frequencies) == 4 else True
+                        logger.info(f"Processing code {internal_code_id} for company {company_id} {is_reporting_next}")
                         result = self._process_frequency(
-                            company, company_id, site_data, internal_code_id, freq, year, start_month, is_reporting_next
+                            company, company_id, internal_code_id, freq, year, start_month, is_reporting_next, site_data
                         )
                         code_results.append(result)
                         
@@ -669,7 +528,7 @@ class SiteDataRollup:
             # Get the current date and calculate year range
             current_date = date.today()
             current_year = int(current_date.strftime("%Y"))
-            year = 2025#current_year - 6
+            year = current_year - 6
             
             logger.info(f"Processing data from year {year} to {current_year}")
             logger.info(f"Target company_id: {company_id}")
