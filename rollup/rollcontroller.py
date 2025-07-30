@@ -41,12 +41,17 @@ class SiteDataRollup:
                 print(f"Connected to MongoDB database: {db_name}")
                 self.company_code_collection = self.connection["company_codes"]
                 self.new_rollup_table = []
-                self.cdata_monthly = self.connection["cdata_monthly"]
+                self.cdata_monthly = self.connection["cdata_month"]
                 self.cdata_yearly = self.connection["cdata_yearly"]
-                self.cdata_quarterly = self.connection["cdata_quarterly"]
+                self.cdata_quarterly = self.connection["cdata_quarter"]
                 self.cdata_bi_annual = self.connection["cdata_bi_annual"]
                 self.processed_combinations = set()  # Track processed (site_code, year, internal_code_id)
                 self.new_rollup_table_mongo = self.connection["rollup_yearly"]
+                # Add separate collections for each frequency
+                self.rollup_monthly = self.connection["rollup_monthly"]
+                self.rollup_quarterly = self.connection["rollup_quarterly"]
+                self.rollup_bi_annual = self.connection["rollup_bi_annual"]
+                self.rollup_yearly = self.connection["rollup_yearly"]
                 logger.info("Database connection established successfully")
                 self._test_rollup_collection_creation()
             else:
@@ -74,6 +79,7 @@ class SiteDataRollup:
     def fetch_site_data(self, company_id: str) -> Optional[Dict]:
         """
         Fetch site data from the API and build hierarchical structure
+        Dynamically detects if sites are flat or hierarchical based on API response
         """
         try:
             api_url = f"https://stagging-region.spectreco.com/api/companies/{company_id}/sites"
@@ -94,60 +100,98 @@ class SiteDataRollup:
                 logger.warning(f"No sites found for company {company_id}")
                 return None
             
-            # Build hierarchical structure
-            site_dict = {}
-            root_sites = []
+            # Analyze the site structure to determine if it's flat or hierarchical
+            site_codes = {site['internal_site_code'] for site in sites}
+            sites_with_parents = [site for site in sites if site.get('parentSiteCode')]
+            missing_parents = []
             
-            # First pass: create site dictionary
-            for site in sites:
-                site_id = site['id']
-                site_dict[site_id] = {
-                    **site,
-                    'sites': []  # Initialize children array
-                }
+            for site in sites_with_parents:
+                parent_code = site.get('parentSiteCode')
+                if parent_code and parent_code not in site_codes:
+                    missing_parents.append(parent_code)
             
-            # Second pass: build hierarchy
-            for site in sites:
-                site_id = site['id']
-                parent_site_code = site.get('parentSiteCode')
+            # If we have sites with parents but the parents don't exist in the API response,
+            # treat this as a flat structure
+            if sites_with_parents and missing_parents:
+                logger.info(f"Detected flat structure for company {company_id}. Sites have parentSiteCode but parents not found in API: {missing_parents}")
+                logger.info(f"Treating all {len(sites)} sites as root sites (flat structure)")
                 
-                if parent_site_code:
-                    # Find parent by internal_site_code
-                    parent_site = None
-                    for s in sites:
-                        if s['internal_site_code'] == parent_site_code:
-                            parent_site = s
-                            break
-                    
-                    if parent_site and parent_site['id'] in site_dict:
-                        site_dict[parent_site['id']]['sites'].append(site_dict[site_id])
-                    else:
-                        # Parent not found, treat as root
-                        root_sites.append(site_dict[site_id])
-                else:
-                    # No parent, this is a root site
-                    root_sites.append(site_dict[site_id])
-            
-            # Return the first root site (assuming single root structure)
-            if root_sites:
-                logger.info(f"Built site hierarchy with {len(sites)} sites, {len(root_sites)} root sites")
-                return root_sites[0]  # Return the main root site
+                # Create a virtual root site that contains all sites as children
+                virtual_root = {
+                    'id': 'virtual_root',
+                    'internal_site_code': 'ALL_SITES',
+                    'name': 'All Sites',
+                    'ownership': 100,
+                    'sites': []
+                }
+                
+                for site in sites:
+                    site_with_children = {
+                        **site,
+                        'sites': []  # No children for individual sites in flat structure
+                    }
+                    virtual_root['sites'].append(site_with_children)
+                
+                logger.info(f"Built virtual hierarchy with {len(sites)} sites under virtual root")
+                return virtual_root
             else:
-                logger.warning("No root sites found")
-                return None
+                # Use original hierarchy building logic for proper hierarchical structures
+                logger.info(f"Detected hierarchical structure for company {company_id}. Building proper parent-child relationships.")
+                
+                site_dict = {}
+                root_sites = []
+                
+                # First pass: create site dictionary
+                for site in sites:
+                    site_id = site['id']
+                    site_dict[site_id] = {
+                        **site,
+                        'sites': []  # Initialize children array
+                    }
+                
+                # Second pass: build hierarchy
+                for site in sites:
+                    site_id = site['id']
+                    parent_site_code = site.get('parentSiteCode')
+                    
+                    if parent_site_code:
+                        # Find parent by internal_site_code
+                        parent_site = None
+                        for s in sites:
+                            if s['internal_site_code'] == parent_site_code:
+                                parent_site = s
+                                break
+                        
+                        if parent_site and parent_site['id'] in site_dict:
+                            site_dict[parent_site['id']]['sites'].append(site_dict[site_id])
+                        else:
+                            # Parent not found in API response, treat as root site
+                            logger.warning(f"Parent site '{parent_site_code}' not found for site '{site.get('internal_site_code')}'. Treating as root site.")
+                            root_sites.append(site_dict[site_id])
+                    else:
+                        # No parent, this is a root site
+                        root_sites.append(site_dict[site_id])
+                
+                # Return the first root site (assuming single root structure)
+                if root_sites:
+                    logger.info(f"Built site hierarchy with {len(sites)} sites, {len(root_sites)} root sites")
+                    return root_sites[0]  # Return the main root site
+                else:
+                    logger.warning("No root sites found")
+                    return None
                 
         except Exception as e:
             logger.error(f"Error fetching site data for company {company_id}: {str(e)}")
             return None
     
-    def find_latest_cdata_for_site(self, cdata_list: List[Dict], site_code: str, year: int, internal_code_id: str) -> Optional[Dict]:
+    def find_latest_cdata_for_site(self, cdata_list: List[Dict], site_code: str, year: int, internal_code_id: str, period_val=None, period_field=None) -> Optional[Dict]:
         """
-        Find the latest updated cdata record for a specific site, year, and internal_code_id combination
+        Find the latest updated cdata record for a specific site, year, internal_code_id, and period (if provided)
         Returns only ONE record - the most recently updated one
         """
         matching_records = []
         for cdata in cdata_list:
-            # Match site_code, year, and internal_code_id
+            # Match site_code, year, internal_code_id, and period (if provided)
             cdata_year = cdata.get('type_year') or cdata.get('reporting_year')
             internal_code_id_field = cdata.get('internal_code_id', '')
             if isinstance(internal_code_id_field, ObjectId):
@@ -156,10 +200,14 @@ class SiteDataRollup:
                 cdata_internal_id = str(internal_code_id_field.get('$oid', ''))
             else:
                 cdata_internal_id = str(internal_code_id_field)
+            period_match = True
+            if period_field and period_val is not None:
+                period_match = cdata.get(period_field) == period_val
             if (
                 cdata.get('site_code') == site_code and 
                 cdata_year == year and 
-                cdata_internal_id == internal_code_id
+                cdata_internal_id == internal_code_id and
+                period_match
             ):
                 matching_records.append(cdata)
         if not matching_records:
@@ -200,9 +248,9 @@ class SiteDataRollup:
         except:
             return None
     
-    def create_rollup_record(self, cdata: Dict, site: Dict, rollup_qty: float = 0, rollup_value: float = 0) -> Dict:
+    def create_rollup_record(self, cdata: Dict, site: Dict, rollup_qty: float = 0, rollup_value: float = 0, period_val=None, period_field=None) -> Dict:
         """
-        Create a new record for the rollup table
+        Create a new record for the rollup table, including period if provided
         """
         new_record = copy.deepcopy(cdata)
         
@@ -218,17 +266,20 @@ class SiteDataRollup:
         new_record['rollup_processed_at'] = {'$date': datetime.now().isoformat()}
         new_record['rollup_processed'] = True
         
+        if period_field and period_val is not None:
+            new_record[period_field] = period_val
+        
         return new_record
     
-    def rollup_recursive(self, site: Dict, cdata_list: List[Dict], year: int, internal_code_id: str, level: int = 0) -> Dict:
+    def rollup_recursive(self, site: Dict, cdata_list: List[Dict], year: int, internal_code_id: str, level: int = 0, period_val=None, period_field=None) -> Dict:
         """
-        Efficient recursive function that processes sites and cdata in one pass
+        Efficient recursive function that processes sites and cdata in one pass, with period support
         Returns: {
             'own_contribution': {'qty': x, 'value': y},  # This site's contribution to parent
             'total_rollup': {'qty': x, 'value': y}       # Total rollup from all children
         }
         """
-        site_cdata = self.find_latest_cdata_for_site(cdata_list, site['internal_site_code'], year, internal_code_id)
+        site_cdata = self.find_latest_cdata_for_site(cdata_list, site['internal_site_code'], year, internal_code_id, period_val=period_val, period_field=period_field)
         indent = "  " * level
         site_code = site['internal_site_code']
         parent_qty= 0
@@ -252,7 +303,7 @@ class SiteDataRollup:
         if 'sites' in site and site['sites']:
             print(f"{indent}  Processing {len(site['sites'])} child sites...")
             for child_site in site['sites']:
-                child_result = self.rollup_recursive(child_site, cdata_list, year, internal_code_id, level + 1)
+                child_result = self.rollup_recursive(child_site, cdata_list, year, internal_code_id, level + 1, period_val=period_val, period_field=period_field)
                 
                 # Accumulate child contributions
                 total_child_rollup_qty += child_result['own_contribution']['qty']
@@ -261,7 +312,7 @@ class SiteDataRollup:
                 print(f"{indent}    Child {child_site['internal_site_code']} contributed: qty={child_result['own_contribution']['qty']:.2f}, value={child_result['own_contribution']['value']:.2f}")
         
         # Step 2: Check if this site has its own cdata
-        combination_key = (site_code, year, internal_code_id)
+        combination_key = (site_code, year, internal_code_id, period_val) if period_field else (site_code, year, internal_code_id)
         
         if combination_key not in self.processed_combinations:
             if site_cdata:
@@ -276,7 +327,9 @@ class SiteDataRollup:
                     site_cdata, 
                     site, 
                     total_child_rollup_qty, 
-                    total_child_rollup_value
+                    total_child_rollup_value,
+                    period_val=period_val,
+                    period_field=period_field
                 )
                 
                 self.new_rollup_table.append(rollup_record)
@@ -293,8 +346,8 @@ class SiteDataRollup:
                     ownership_value = float(ownership_value) if ownership_value.isdigit() else 100
                 ownership_factor = ownership_value / 100.0
                 
-                total_qty_contribution = (original_qty + total_child_rollup_qty) * ownership_factor
-                total_value_contribution = (original_value + total_child_rollup_value) * ownership_factor
+                total_qty_contribution = (original_qty * ownership_factor) + total_child_rollup_qty
+                total_value_contribution = (original_value * ownership_factor) + total_child_rollup_value
                 
                 result['own_contribution'] = {
                     'qty': total_qty_contribution,
@@ -331,19 +384,34 @@ class SiteDataRollup:
         
         return result
     
-    def save_rollup_to_db(self):
+    def save_rollup_to_db(self, frequency='yearly'):
         """
-        Save the current rollup table to the MongoDB rollup_yearly collection.
+        Save the current rollup table to the appropriate MongoDB collection based on frequency.
         Handles conversion of any non-serializable fields.
         """
         import uuid
         db_name = self.connection.name if hasattr(self.connection, 'name') else str(self.connection)
-        print(f"[DEBUG] Using database: {db_name}, collection: rollup_yearly")
-        logger.info(f"save_rollup_to_db called. new_rollup_table length: {len(self.new_rollup_table)}")
-        print(f"save_rollup_to_db called. new_rollup_table length: {len(self.new_rollup_table)}")
+        
+        # Select the appropriate collection based on frequency
+        if frequency == 'monthly':
+            collection = self.rollup_monthly
+            collection_name = "rollup_monthly"
+        elif frequency == 'quarterly':
+            collection = self.rollup_quarterly
+            collection_name = "rollup_quarterly"
+        elif frequency == 'bi_annual':
+            collection = self.rollup_bi_annual
+            collection_name = "rollup_bi_annual"
+        else:  # yearly (default)
+            collection = self.rollup_yearly
+            collection_name = "rollup_yearly"
+        
+        print(f"[DEBUG] Using database: {db_name}, collection: {collection_name}")
+        logger.info(f"save_rollup_to_db called for {frequency}. new_rollup_table length: {len(self.new_rollup_table)}")
+        print(f"save_rollup_to_db called for {frequency}. new_rollup_table length: {len(self.new_rollup_table)}")
         if not self.new_rollup_table:
-            logger.info("No rollup records to save.")
-            print("No rollup records to save.")
+            logger.info(f"No rollup records to save for {frequency}.")
+            print(f"No rollup records to save for {frequency}.")
             return
         try:
             # Prepare records for MongoDB (remove any problematic fields)
@@ -353,30 +421,47 @@ class SiteDataRollup:
                 rec.pop('_id', None)
                 # Add a unique field for this test run
                 rec['rollup_insert_uuid'] = str(uuid.uuid4())
+                rec['rollup_frequency'] = frequency  # Add frequency info to the record
                 records_to_insert.append(rec)
-            logger.info(f"Attempting to insert {len(records_to_insert)} records into rollup_yearly.")
-            print(f"Attempting to insert {len(records_to_insert)} records into rollup_yearly.")
+            logger.info(f"Attempting to insert {len(records_to_insert)} records into {collection_name}.")
+            print(f"Attempting to insert {len(records_to_insert)} records into {collection_name}.")
             # Print all records (up to 10)
             for idx, rec in enumerate(records_to_insert[:10]):
                 print(f"Record {idx+1}: {rec}")
             if len(records_to_insert) > 10:
                 print(f"... {len(records_to_insert)-10} more records not shown ...")
-            result = self.new_rollup_table_mongo.insert_many(records_to_insert)
-            logger.info(f"Inserted {len(result.inserted_ids)} rollup records into rollup_yearly.")
-            print(f"Inserted {len(result.inserted_ids)} rollup records into rollup_yearly.")
+            result = collection.insert_many(records_to_insert)
+            logger.info(f"Inserted {len(result.inserted_ids)} rollup records into {collection_name}.")
+            print(f"Inserted {len(result.inserted_ids)} rollup records into {collection_name}.")
             print(f"[DEBUG] Inserted IDs: {result.inserted_ids}")
             # Print count after insert
-            count = self.new_rollup_table_mongo.count_documents({})
-            print(f"[DEBUG] rollup_yearly document count after insert: {count}")
+            count = collection.count_documents({})
+            print(f"[DEBUG] {collection_name} document count after insert: {count}")
         except Exception as e:
-            logger.error(f"Failed to insert rollup records: {str(e)}")
-            print(f"Failed to insert rollup records: {str(e)}")
+            logger.error(f"Failed to insert rollup records for {frequency}: {str(e)}")
+            print(f"Failed to insert rollup records for {frequency}: {str(e)}")
     
-    def process_rollup(self, site_data: Dict, cdata_list: List[Dict], year: int, internal_code_id: str):
+    def save_rollup_monthly_to_db(self):
+        """Save rollup data to monthly collection"""
+        self.save_rollup_to_db('monthly')
+    
+    def save_rollup_quarterly_to_db(self):
+        """Save rollup data to quarterly collection"""
+        self.save_rollup_to_db('quarterly')
+    
+    def save_rollup_bi_annual_to_db(self):
+        """Save rollup data to bi-annual collection"""
+        self.save_rollup_to_db('bi_annual')
+    
+    def save_rollup_yearly_to_db(self):
+        """Save rollup data to yearly collection"""
+        self.save_rollup_to_db('yearly')
+    
+    def process_rollup(self, site_data: Dict, cdata_list: List[Dict], year: int, internal_code_id: str, frequency: str = 'yearly'):
         """
         Main entry point for rollup processing
         """
-        print(f"Starting efficient recursive rollup for year {year}, internal_code_id {internal_code_id}")
+        print(f"Starting efficient recursive rollup for year {year}, internal_code_id {internal_code_id}, frequency {frequency}")
         print("="*80)
         
         # Reset state
@@ -390,8 +475,15 @@ class SiteDataRollup:
         print(f"Rollup completed! Created {len(self.new_rollup_table)} records")
         print(f"Root site total contribution: qty={root_result['own_contribution']['qty']:.2f}, value={root_result['own_contribution']['value']:.2f}")
         
-        # Save all rollup records to MongoDB
-        self.save_rollup_to_db()
+        # Save all rollup records to MongoDB based on frequency
+        if frequency == 'monthly':
+            self.save_rollup_monthly_to_db()
+        elif frequency == 'quarterly':
+            self.save_rollup_quarterly_to_db()
+        elif frequency == 'bi_annual':
+            self.save_rollup_bi_annual_to_db()
+        else:  # yearly (default)
+            self.save_rollup_yearly_to_db()
     
     def get_rollup_table(self) -> List[Dict]:
         """
@@ -492,7 +584,8 @@ class SiteDataRollup:
                     site_data, 
                     sample_cdata, 
                     year, 
-                    internal_code_id
+                    internal_code_id,
+                    'monthly'
                 )
             elif frequency == 'quater':
                 sample_cdata = list(self.cdata_quarterly.find({"company_id": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
@@ -502,7 +595,8 @@ class SiteDataRollup:
                     site_data, 
                     sample_cdata, 
                     year, 
-                    internal_code_id
+                    internal_code_id,
+                    'quarterly'
                 )
             elif frequency == 'semi_annual':
                 sample_cdata = list(self.cdata_bi_annual.find({"company_id": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
@@ -512,7 +606,8 @@ class SiteDataRollup:
                     site_data, 
                     sample_cdata, 
                     year, 
-                    internal_code_id
+                    internal_code_id,
+                    'bi_annual'
                 )
             elif frequency == 'annual':
                 sample_cdata = list(self.cdata_yearly.find({"company_id": str(company_id), "reporting_year": year, "internal_code_id": internal_code_id}))
@@ -522,7 +617,8 @@ class SiteDataRollup:
                     site_data, 
                     sample_cdata, 
                     year, 
-                    internal_code_id
+                    internal_code_id,
+                    'yearly'
                 )
             
             return {
