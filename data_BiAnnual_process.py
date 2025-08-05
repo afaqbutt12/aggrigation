@@ -383,6 +383,17 @@ def process_BiAnnual_data(company_id, internal_code_id, year, start_month, site_
             narration = entry.get("narration", "")
             url = entry.get("url", "")
             description = f"{narration} {url}"
+            cdata_collection.update_many({
+                "company_code": company_id,
+                "month": entry.get("month", ""),
+                "semi_annual": entry.get("semi_annual", ""),
+                "site_code" : str(site_code),
+                "type": "actual",
+                "type_year": str(entry.get("type_year", "")),
+                "internal_code_id": entry.get("internal_code_id", ""),
+                },
+                {"$set": {"is_processed": True}}
+            ) 
             cdata_BiAnnual_collection.delete_many({
                 "company_code": company_id,
                 "semi_annual": entry.get("semi_annual", ""),

@@ -698,6 +698,16 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
             narration = entry.get("narration", "")
             url = entry.get("url", "")
             description = f"{narration} {url}" 
+            cdata_collection.update_many({
+                "company_code": company_id,
+                "month": entry.get("month", ""),
+                "site_code" : str(site_code),
+                "type": "actual",
+                "type_year": str(entry.get("type_year", "")),
+                "internal_code_id": entry.get("internal_code_id", ""),
+                },
+                {"$set": {"is_processed": True}}
+            ) 
             cdata_month_collection.delete_many({
                 "company_code": company_id,
                 "month": entry.get("month", ""),

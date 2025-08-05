@@ -16,7 +16,6 @@ load_dotenv()
 def process_yearly_data(company_id, internal_code_id, year, start_month, site_code):
     print("Detail :: ", company_id, internal_code_id, year, start_month, site_code)
     
-
     connection = db_connection.connect_to_database()
     if connection is not None:
         # company_code_collection = connection["company_codes"]
@@ -110,7 +109,6 @@ def process_yearly_data(company_id, internal_code_id, year, start_month, site_co
                 return int(float(number_str))
             return None
         return int(s)
- 
 
     def safe_int(value, default=0):
         if value is not None and value != "":
@@ -230,8 +228,17 @@ def process_yearly_data(company_id, internal_code_id, year, start_month, site_co
             narration = entry.get("narration", "")
             url = entry.get("url", "")
             description = f"{narration} {url}"
-
-            cdata_yearly_collection.delete_many({
+            cdata_collection.update_many({
+                "company_code": company_id,
+                "site_code" : str(site_code),
+                "month": entry.get("month", ""),
+                "type": "actual",
+                "type_year": str(entry.get("type_year", "")),
+                "internal_code_id": entry.get("internal_code_id", ""),
+                },
+                {"$set": {"is_processed": True}}
+            )
+            cdata_yearly_collection.delete_many({   #completed
                 "company_code": company_id,
                 "month": entry.get("month", ""),
                 "type_year": int(entry.get("type_year", "")),
