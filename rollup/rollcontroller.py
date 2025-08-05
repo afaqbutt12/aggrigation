@@ -719,7 +719,7 @@ class SiteDataRollup:
             
             # Get company codes from database
             company_codes = list(self.company_code_collection.find({"company_id": str(company_id)}))
-            logger.info(f"Company Codes: {company_codes}")
+            logger.info(f"Company Codes: {len(company_codes)}")
             
             if not company_codes:
                 logger.warning(f"No company codes found for company {company_id}")

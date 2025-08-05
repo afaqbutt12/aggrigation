@@ -149,9 +149,12 @@ class CompanyDataController:
         
         for i, company in enumerate(companies, 1):
             try:
-                logger.info(f"Processing company {i}/{len(companies)}: ID {company.get('id')}")
-                result = self._process_single_company(company, year)
-                processed_companies.append(result)
+                company_id = str(company['id'])
+                cdata = list(self.cdata_collection.find({"company_code": company_id, "is_aggregated": False}))
+                logger.info(f"Processing company {i}/{len(companies)}: ID {company.get('id')}, records to process: {len(cdata)}")
+                if len(cdata):
+                    result = self._process_single_company(company, year)
+                    processed_companies.append(result)
                 
             except Exception as e:
                 logger.error(f"Error processing company {company.get('id', 'unknown')}: {str(e)}")
@@ -181,27 +184,18 @@ class CompanyDataController:
             logger.info(f"Start month for company {month_data}")
             
             # Get company codes from database
-            company_codes = list(self.company_code_collection.find({"company_id": str(company_id)}))
-            cdata = list(self.cdata_collection.find({"company_code": str(company_id), "is_aggregated": False}))
-            logger.info(f"Company Codes: {company_codes}, {len(cdata)}")
-            if len(cdata) >0:
-                logger.warning(f"No company codes found for company {company_id}")
+            company_codes = list(self.company_code_collection.find({"company_id": company_id}))
+            logger.info(f"Company Codes: {len(company_codes)}")
+            if not company_codes:
+                logger.info(f"No company codes found for company {company_id}")
                 return {
                     "company_id": company_id,
                     "company_name": company_name,
                     "status": "warning",
-                    "message": "No company data found that need to be processed",
+                    "message": "No company codes found",
+                    "processed_codes": []
                 }
-                if not company_codes:
-                    logger.warning(f"No company codes found for company {company_id}")
-                    return {
-                        "company_id": company_id,
-                        "company_name": company_name,
-                        "status": "warning",
-                        "message": "No company codes found",
-                        "processed_codes": []
-                    }
-                
+            
             # Get and validate reporting frequency
             reporting_frequencies = self._get_reporting_frequencies(company)
             
@@ -214,12 +208,11 @@ class CompanyDataController:
                     "message": "No valid reporting frequencies found",
                     "processed_codes": []
                 }
-            
             # Process each company code
-            if len(cdata) >0:
-                processed_codes = self._process_company_codes(
-                    company, company_codes, reporting_frequencies, year, start_month
-                )
+            logger.info(f"Company reporting frequencies: {len(reporting_frequencies)}")
+            processed_codes = self._process_company_codes(
+                company, company_codes, reporting_frequencies, year, start_month
+            )
             
             # Calculate processing time
             processing_time = (datetime.now() - company_start_time).total_seconds()
@@ -265,17 +258,16 @@ class CompanyDataController:
         
         return validated_frequencies
 
-
-    def _process_single_code(self, company, company_id, company_code, reporting_frequencies, year, start_month):
+    def _process_single_code(self, company, company_id: str, company_code, reporting_frequencies, year, start_month):
         try:
             internal_code_id = company_code['internal_code_id']
             logger.info(f"Processing code {internal_code_id} for company {company_id}")
 
             code_results = []
-            cdata = list(self.cdata_collection.find({"company_code": str(company_id), "is_aggregated": False}))
+            cdata = list(self.cdata_collection.find({"company_code": company_id, "is_aggregated": False}))
             logger.info(f"Company Codes: {internal_code_id}, {len(cdata)}")
             
-            if len(cdata) > 0:
+            if len(cdata):
                 for freq in reporting_frequencies:
                     try:
                         is_reporting_next = False if len(reporting_frequencies) == 4 else True
@@ -290,7 +282,6 @@ class CompanyDataController:
                             "status": "error",
                             "error": str(e)
                         })
-
                 return {
                     "internal_code_id": internal_code_id,
                     "frequency_results": code_results,
@@ -308,101 +299,116 @@ class CompanyDataController:
     def _process_company_codes(self, company: Dict, company_codes: List[Dict], reporting_frequencies: List[str], year: int, start_month: str) -> List[Dict]:
         processed_codes = []
         company_id = str(company['id'])
-
+        logger.info(f"company id id processing: {company_id}")
         with ThreadPoolExecutor(max_workers=50) as executor:
+            
             futures = [
-                executor.submit(self._process_single_code, company, company_id, code, reporting_frequencies, year, start_month)
+                executor.submit(
+                    self._process_single_code,
+                    company,
+                    company_id,
+                    code,
+                    reporting_frequencies,
+                    year,
+                    start_month
+                )
                 for code in company_codes
             ]
 
             for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    processed_codes.append(result)
+                try:
+                    result = future.result()
+                    if result:
+                        processed_codes.append(result)
+                except Exception as e:
+                    logger.error(f"Exception during company code processing: {str(e)}")
+                    processed_codes.append({
+                        "status": "error",
+                        "error": str(e)
+                    })
 
         return processed_codes
-
-        def _process_frequency(self, company: Dict, company_id: str, internal_code_id: str, frequency: str, year: int, start_month: str, is_reporting_next: bool) -> Dict:
-            """Process a specific frequency for a company code"""
-            try:
-                logger.info(f"Processing {frequency} data for company {company_id}, code {internal_code_id}")
-                # Process main company data
-                if frequency == 'month':
-                    logger.info(f"Processing code {start_month}, code {year}")
-                    self._process_monthly(company_id, internal_code_id, year, start_month, company)
-                elif frequency == 'quater':
-                    self._process_quarterly(company_id, internal_code_id, year, start_month, company)
-                elif frequency == 'semi_annual':
-                    self._process_bi_annual(company_id, internal_code_id, year, start_month, company)
-                elif frequency == 'annual':
-                    self._process_yearly(company_id, internal_code_id, year, start_month, company, is_reporting_next)
-                
-                return {
-                    "frequency": frequency,
-                    "status": "success",
-                    "sites_processed": len(company.get('company_sites', []))
-                }
-                
-            except Exception as e:
-                logger.error(f"Error processing {frequency} for company {company_id}: {str(e)}")
-                return {
-                    "frequency": frequency,
-                    "status": "error",
-                    "error": str(e)
-                }
-        
-        def _process_monthly(self, company_id: str, internal_code_id: str, year: int, start_month: str, company: Dict):
-            """Process monthly data for a company"""
+    def _process_frequency(self, company: Dict, company_id: str, internal_code_id: str, frequency: str, year: int, start_month: str, is_reporting_next: bool) -> Dict:
+        """Process a specific frequency for a company code"""
+        try:
+            logger.info(f"Processing {frequency} data for company {company_id}, code {internal_code_id}")
             # Process main company data
-            if all([company_id, internal_code_id, year, start_month]):
-                delete_monthly_data(company_id, start_month, year, internal_code_id, "")
-                process_monthly_data(company_id, internal_code_id, year, start_month, site_code="")
+            if frequency == 'month':
+                logger.info(f"Processing code {start_month}, code {year}")
+                self._process_monthly(company_id, internal_code_id, year, start_month, company)
+            elif frequency == 'quater':
+                self._process_quarterly(company_id, internal_code_id, year, start_month, company)
+            elif frequency == 'semi_annual':
+                self._process_bi_annual(company_id, internal_code_id, year, start_month, company)
+            elif frequency == 'annual':
+                self._process_yearly(company_id, internal_code_id, year, start_month, company, is_reporting_next)
             
-            # Process site data
-            for site_code in company.get('company_sites', []):
-                if (all([company_id, internal_code_id, year, start_month]) and 
-                    site_code.get("internal_site_code")):
-                    delete_monthly_data(company_id, start_month, year, internal_code_id, site_code["internal_site_code"])
-                    process_monthly_data(company_id, internal_code_id, year, start_month, site_code["internal_site_code"])
+            return {
+                "frequency": frequency,
+                "status": "success",
+                "sites_processed": len(company.get('company_sites', []))
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing {frequency} for company {company_id}: {str(e)}")
+            return {
+                "frequency": frequency,
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def _process_monthly(self, company_id: str, internal_code_id: str, year: int, start_month: str, company: Dict):
+        """Process monthly data for a company"""
+        # Process main company data
+        if all([company_id, internal_code_id, year, start_month]):
+            delete_monthly_data(company_id, start_month, year, internal_code_id, "")
+            process_monthly_data(company_id, internal_code_id, year, start_month, site_code="")
         
-        def _process_quarterly(self, company_id: str, internal_code_id: str, year: int, start_month: str, company: Dict):
-            """Process quarterly data for a company"""
-            # Process main company data
-            if all([company_id, internal_code_id, year, start_month]):
-                process_quarterly_data(company_id, internal_code_id, year, start_month, site_code="")
-            
-            # Process site data
-            for site_code in company.get('company_sites', []):
-                if (all([company_id, internal_code_id, year, start_month]) and 
-                    site_code.get("internal_site_code")):
-                    process_quarterly_data(company_id, internal_code_id, year, start_month, site_code["internal_site_code"])
+        # Process site data
+        for site_code in company.get('company_sites', []):
+            if (all([company_id, internal_code_id, year, start_month]) and 
+                site_code.get("internal_site_code")):
+                delete_monthly_data(company_id, start_month, year, internal_code_id, site_code["internal_site_code"])
+                process_monthly_data(company_id, internal_code_id, year, start_month, site_code["internal_site_code"])
+    
+    def _process_quarterly(self, company_id: str, internal_code_id: str, year: int, start_month: str, company: Dict):
+        """Process quarterly data for a company"""
+        # Process main company data
+        if all([company_id, internal_code_id, year, start_month]):
+            process_quarterly_data(company_id, internal_code_id, year, start_month, site_code="")
         
-        def _process_bi_annual(self, company_id: str, internal_code_id: str, year: int, 
-                            start_month: str, company: Dict):
-            """Process bi-annual data for a company"""
-            # Process main company data
-            if all([company_id, internal_code_id, year, start_month]):
-                process_BiAnnual_data(company_id, internal_code_id, year, start_month, site_code="")
-            
-            # Process site data
-            for site_code in company.get('company_sites', []):
-                if (all([company_id, internal_code_id, year, start_month]) and 
-                    site_code.get("internal_site_code")):
-                    process_BiAnnual_data(company_id, internal_code_id, year, start_month, 
-                                        site_code["internal_site_code"])
+        # Process site data
+        for site_code in company.get('company_sites', []):
+            if (all([company_id, internal_code_id, year, start_month]) and 
+                site_code.get("internal_site_code")):
+                process_quarterly_data(company_id, internal_code_id, year, start_month, site_code["internal_site_code"])
+    
+    def _process_bi_annual(self, company_id: str, internal_code_id: str, year: int, 
+                        start_month: str, company: Dict):
+        """Process bi-annual data for a company"""
+        # Process main company data
+        if all([company_id, internal_code_id, year, start_month]):
+            process_BiAnnual_data(company_id, internal_code_id, year, start_month, site_code="")
         
-        def _process_yearly(self, company_id: str, internal_code_id: str, year: int, start_month: str, company: Dict, is_reporting_next: bool):
-            """Process yearly data for a company"""
-            # Process main company data
-            if all([company_id, internal_code_id, year, start_month]):
-                reporting_month = start_month if is_reporting_next else "January"
-                process_yearly_data(company_id, internal_code_id, year, reporting_month, site_code="")
-            
-            # Process site data
-            for site_code in company.get('company_sites', []):
-                if (all([company_id, internal_code_id, year, start_month]) and 
-                    site_code.get("internal_site_code")):
-                    process_yearly_data(company_id, internal_code_id, year, reporting_month, site_code["internal_site_code"])
+        # Process site data
+        for site_code in company.get('company_sites', []):
+            if (all([company_id, internal_code_id, year, start_month]) and 
+                site_code.get("internal_site_code")):
+                process_BiAnnual_data(company_id, internal_code_id, year, start_month, 
+                                    site_code["internal_site_code"])
+    
+    def _process_yearly(self, company_id: str, internal_code_id: str, year: int, start_month: str, company: Dict, is_reporting_next: bool):
+        """Process yearly data for a company"""
+        # Process main company data
+        if all([company_id, internal_code_id, year, start_month]):
+            reporting_month = start_month if is_reporting_next else "January"
+            process_yearly_data(company_id, internal_code_id, year, reporting_month, site_code="")
+        
+        # Process site data
+        for site_code in company.get('company_sites', []):
+            if (all([company_id, internal_code_id, year, start_month]) and 
+                site_code.get("internal_site_code")):
+                process_yearly_data(company_id, internal_code_id, year, reporting_month, site_code["internal_site_code"])
 
 def main(company_id: Optional[int] = None) -> Dict[str, Any]:
     """

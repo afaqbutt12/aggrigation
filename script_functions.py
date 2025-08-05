@@ -104,7 +104,7 @@ def process_bi_annual_data(company_code, year=None, reporting_frequency=None):
             logger.warning("No internal code IDs found for company %s.", company_code)
             return
 
-        query = {"company_code": str(company_code)}
+        query = {"company_code": str(company_code), "is_aggregated": False,}
         data = list(cdata_collection.find(query))
         data = [entry for entry in data if entry["type"] == "actual" and MONTHS.index(entry["month"]) >= MONTHS.index(start_month)]
         data.sort(key=lambda x: (x["type_year"], MONTHS.index(x["month"])))
@@ -195,7 +195,7 @@ def process_yearly_data(company_code, year=None, reporting_frequency=None):
         cdata_collection = db["cdata"]
         cdata_yearly_collection = db["cdata_yearly"]
 
-        query = {"company_code": str(company_code)}
+        query = {"company_code": str(company_code), "is_aggregated": False,}
         if year:
             query["type_year"] = year
         query["type"] = "actual"
@@ -277,7 +277,7 @@ def process_monthly_data(company_code, year=None, start_month=None, reporting_fr
         cdata_collection = db["cdata"]
         cdata_month_collection = db["cdata_month"]
 
-        query = {"company_code": str(company_code)}
+        query = {"company_code": str(company_code), "is_aggregated": False,}
         if year:
             query["type_year"] = year
             query["type"] = "actual"

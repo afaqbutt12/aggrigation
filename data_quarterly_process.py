@@ -442,6 +442,7 @@ def process_quarterly_data(company_id, internal_code_id, year, start_month, site
             "internal_code_id": ObjectId(internal_code_id),
             "type": "actual",
             "site_code": str(site_code),
+            "is_aggregated": False,
             "$or": [
                 {
                     "$and": [
@@ -508,7 +509,7 @@ def process_quarterly_data(company_id, internal_code_id, year, start_month, site
                 "type_year": str(entry.get("type_year", "")),
                 "internal_code_id": entry.get("internal_code_id", ""),
                 },
-                {"$set": {"is_processed": True}}
+                {"$set": {"is_aggregated": True}}
             ) 
             cdata_quarter_collection.delete_many({
                 "company_code": company_id,

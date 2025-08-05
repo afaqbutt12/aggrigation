@@ -625,7 +625,7 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
             "company_code": str(company_id),
             "internal_code_id": ObjectId(internal_code_id),
             "type": "actual",
-            # "forecasting_status": False,
+            "is_aggregated": False,
             "site_code": str(site_code),
             "$or": [
                 {
@@ -706,7 +706,7 @@ def process_monthly_data(company_id, internal_code_id, year, start_month, site_c
                 "type_year": str(entry.get("type_year", "")),
                 "internal_code_id": entry.get("internal_code_id", ""),
                 },
-                {"$set": {"is_processed": True}}
+                {"$set": {"is_aggregated": True}}
             ) 
             cdata_month_collection.delete_many({
                 "company_code": company_id,
