@@ -186,7 +186,7 @@ def get_aggregation_status(thread_id):
         logger.error(f"Error getting aggregation status: {str(e)}")
         return jsonify({
             'status': 'error',
-            'error': str(e)
+            'error': e
         }), 500
 
 @app.route('/aggregation-status', methods=['GET'])
