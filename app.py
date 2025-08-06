@@ -1,3 +1,5 @@
+import json
+from bson import ObjectId
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import logging
@@ -160,6 +162,7 @@ def run_aggregation_for_company(company_id):
 
 @app.route('/aggregation-status/<thread_id>', methods=['GET'])
 def get_aggregation_status(thread_id):
+    
     """Get the status of a specific aggregation process"""
     try:
         with thread_lock:
@@ -170,6 +173,9 @@ def get_aggregation_status(thread_id):
                 }), 404
             
             thread_info = running_threads[thread_id].copy()
+            
+            # Convert ObjectId fields to strings
+            thread_info = convert_objectids_to_strings(thread_info)
             
             # Calculate duration if available
             if 'end_time' in thread_info:
@@ -192,36 +198,16 @@ def get_aggregation_status(thread_id):
             }
         }), 500
 
-@app.route('/aggregation-status', methods=['GET'])
-def get_all_aggregation_status():
-    """Get the status of all aggregation processes"""
-    try:
-        with thread_lock:
-            all_threads = {}
-            for thread_id, thread_info in running_threads.items():
-                thread_copy = thread_info.copy()
-                
-                # Calculate duration
-                if 'end_time' in thread_copy:
-                    thread_copy['duration'] = thread_copy['end_time'] - thread_copy['start_time']
-                elif thread_copy['status'] == 'running':
-                    thread_copy['duration'] = time.time() - thread_copy['start_time']
-                
-                all_threads[thread_id] = thread_copy
-        
-        return jsonify({
-            'status': 'success',
-            'threads': all_threads,
-            'total_threads': len(all_threads)
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error getting all aggregation status: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'error': str(e)
-        }), 500
-
+def convert_objectids_to_strings(data):
+    """Recursively convert ObjectId instances to strings"""
+    if isinstance(data, dict):
+        return {key: convert_objectids_to_strings(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [convert_objectids_to_strings(item) for item in data]
+    elif isinstance(data, ObjectId):
+        return str(data)
+    else:
+        return data
 def run__rollup_script_in_background(company_id, thread_id):
     """Run the main script in a background thread"""
     try:
