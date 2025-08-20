@@ -12,6 +12,8 @@ import traceback
 import main
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), './rollup')))
 import rollcontroller
+# Import the company codes controller
+from run_recomendation.company_codes_controller import CompanyCodesController
 
 # Load environment variables
 load_dotenv()
@@ -114,6 +116,45 @@ def run_rollup_script_in_background(company_id, thread_id):
                 running_threads[thread_id]['traceback'] = traceback.format_exc()
                 running_threads[thread_id]['end_time'] = time.time()
 
+def run_company_codes_merge_in_background(thread_id):
+    """Run the company codes merge script in a background thread"""
+    try:
+        with thread_lock:
+            running_threads[thread_id] = {
+                'status': 'running',
+                'company_id': None,  # Company codes merge processes all companies
+                'start_time': time.time(),
+                'type': 'company_codes_merge'
+            }
+        
+        logger.info("Starting company codes merge process")
+        
+        # Initialize controller and run merge
+        controller = CompanyCodesController()
+        result = controller.merge_company_codes()
+        controller.close_connection()
+        
+        # Update thread status
+        with thread_lock:
+            if thread_id in running_threads:
+                running_threads[thread_id]['status'] = 'completed'
+                running_threads[thread_id]['result'] = result
+                running_threads[thread_id]['end_time'] = time.time()
+        
+        logger.info("Company codes merge completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error in background company codes merge: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Update thread status with error
+        with thread_lock:
+            if thread_id in running_threads:
+                running_threads[thread_id]['status'] = 'error'
+                running_threads[thread_id]['error'] = str(e)
+                running_threads[thread_id]['traceback'] = traceback.format_exc()
+                running_threads[thread_id]['end_time'] = time.time()
+
 # Root route to handle health checks
 @app.route('/', methods=['GET'])
 def root():
@@ -125,6 +166,8 @@ def root():
             'health': '/health',
             'aggregation': '/run-aggregation',
             'rollup': '/start-rollup',
+            'company_codes_merge': '/company-codes/merge',
+            'company_codes_stats': '/company-codes/stats',
             'status': '/status/<thread_id>'
         }
     }), 200
@@ -137,10 +180,21 @@ def health_check():
         from RegionAPI import fetch_all_company_safe
         companies = fetch_all_company_safe()
         
+        # Check MongoDB connection for company codes
+        try:
+            controller = CompanyCodesController()
+            stats = controller.get_collection_stats()
+            controller.close_connection()
+            mongo_status = 'connected' if stats['status'] == 'success' else 'disconnected'
+        except Exception as e:
+            mongo_status = 'disconnected'
+            logger.warning(f"MongoDB health check failed: {str(e)}")
+        
         return jsonify({
             'status': 'healthy',
             'message': 'Service is running',
             'api_status': 'connected' if companies else 'disconnected',
+            'mongo_status': mongo_status,
             'active_threads': len([t for t_id, t in running_threads.items() if t['status'] == 'running'])
         }), 200
     except Exception as e:
@@ -275,6 +329,152 @@ def run_rollup():
             'error': str(e)
         }), 500
 
+# ============================================================================
+# COMPANY CODES ENDPOINTS
+# ============================================================================
+
+@app.route('/company-codes/merge', methods=['POST'])
+def start_company_codes_merge():
+    """Start the company codes merge process in background"""
+    try:
+        logger.info("Received company codes merge request")
+        
+        # Check if there's already a running company codes merge process
+        with thread_lock:
+            for thread_id, thread_info in running_threads.items():
+                if (thread_info['status'] == 'running' and 
+                    thread_info['type'] == 'company_codes_merge'):
+                    return jsonify({
+                        'status': 'already_running',
+                        'message': 'Company codes merge is already running.',
+                        'thread_id': thread_id
+                    }), 409
+        
+        # Generate unique thread ID
+        thread_id = f"merge_{int(time.time())}"
+        
+        # Run script in background thread
+        thread = threading.Thread(
+            target=run_company_codes_merge_in_background, 
+            args=(thread_id,),
+            name=f"CompanyCodesMergeThread-{thread_id}"
+        )
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            'status': 'started',
+            'message': 'Company codes merge process has been started in the background.',
+            'thread_id': thread_id,
+            'check_status_url': f'/status/{thread_id}'
+        }), 202
+        
+    except Exception as e:
+        logger.error(f"Error triggering background company codes merge: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+@app.route('/company-codes/merge-sync', methods=['POST'])
+def run_company_codes_merge_sync():
+    """Run company codes merge process synchronously"""
+    try:
+        logger.info("Running company codes merge synchronously")
+        
+        controller = CompanyCodesController()
+        result = controller.merge_company_codes()
+        controller.close_connection()
+        
+        if result['status'] == 'success':
+            logger.info(result['message'])
+            return jsonify(result), 200
+        else:
+            logger.error(result['message'])
+            return jsonify(result), 500
+            
+    except Exception as e:
+        logger.error(f"Error running company codes merge: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'message': f'Company codes merge failed: {str(e)}'
+        }), 500
+
+@app.route('/company-codes/stats', methods=['GET'])
+def get_company_codes_stats():
+    """Get company codes collection statistics"""
+    try:
+        # Check if async is requested
+        async_request = request.args.get('async', 'false').lower() == 'true'
+        
+        if async_request:
+            # Generate unique thread ID for stats
+            thread_id = f"stats_{int(time.time())}"
+            
+            def run_stats_in_background(thread_id):
+                try:
+                    with thread_lock:
+                        running_threads[thread_id] = {
+                            'status': 'running',
+                            'company_id': None,
+                            'start_time': time.time(),
+                            'type': 'company_codes_stats'
+                        }
+                    
+                    controller = CompanyCodesController()
+                    result = controller.get_collection_stats()
+                    controller.close_connection()
+                    
+                    with thread_lock:
+                        if thread_id in running_threads:
+                            running_threads[thread_id]['status'] = 'completed'
+                            running_threads[thread_id]['result'] = result
+                            running_threads[thread_id]['end_time'] = time.time()
+                            
+                except Exception as e:
+                    with thread_lock:
+                        if thread_id in running_threads:
+                            running_threads[thread_id]['status'] = 'error'
+                            running_threads[thread_id]['error'] = str(e)
+                            running_threads[thread_id]['end_time'] = time.time()
+            
+            # Start background thread
+            thread = threading.Thread(
+                target=run_stats_in_background,
+                args=(thread_id,),
+                name=f"StatsThread-{thread_id}"
+            )
+            thread.daemon = True
+            thread.start()
+            
+            return jsonify({
+                'status': 'started',
+                'message': 'Statistics collection started in background.',
+                'thread_id': thread_id,
+                'check_status_url': f'/status/{thread_id}'
+            }), 202
+        else:
+            # Run synchronously
+            controller = CompanyCodesController()
+            result = controller.get_collection_stats()
+            controller.close_connection()
+            
+            return jsonify(result), 200 if result['status'] == 'success' else 500
+            
+    except Exception as e:
+        logger.error(f"Error getting company codes stats: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'message': f'Failed to get statistics: {str(e)}'
+        }), 500
+
+# ============================================================================
+# EXISTING ENDPOINTS (keeping your original functionality)
+# ============================================================================
+
 @app.route('/run-aggregation/<int:company_id>', methods=['POST'])
 def run_aggregation_for_company(company_id):
     """Run aggregation process synchronously for a specific company"""
@@ -333,7 +533,7 @@ def run_rollup_for_company(company_id):
 
 @app.route('/status/<thread_id>', methods=['GET'])
 def get_status(thread_id):
-    """Get the status of a specific process (aggregation or rollup)"""
+    """Get the status of a specific process (aggregation, rollup, or company codes merge)"""
     try:
         with thread_lock:
             if thread_id not in running_threads:
