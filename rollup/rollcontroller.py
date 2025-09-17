@@ -912,7 +912,7 @@ def main(company_id: Optional[int] = None) -> Dict[str, Any]:
     
     try:
         controller = SiteDataRollup()
-        result = controller.process_company_data(company_id=company_id)
+        result = controller.process_company_data(company_id)
         
         if result["success"]:
             logger.info(result["message"])

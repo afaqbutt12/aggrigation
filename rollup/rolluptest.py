@@ -158,7 +158,7 @@ def test_frequency_rollup(controller, company_id, frequency, collection_name, ye
 
 def main():
     controller = SiteDataRollup()
-    company_id = "482"
+    company_id = "555"
     
     print(f"Fetching site hierarchy for company {company_id}...")
     site_data = controller.fetch_site_data(company_id)

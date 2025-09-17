@@ -125,6 +125,9 @@ def root():
             'health': '/health',
             'aggregation': '/run-aggregation',
             'rollup': '/start-rollup',
+            'rollup_api': '/api/rollup',
+            'rollup_status': '/api/rollup/status',
+            'rollup_data': '/api/rollup/data',
             'status': '/status/<thread_id>'
         }
     }), 200
@@ -150,7 +153,295 @@ def health_check():
             'message': f'Service is running but encountered an error: {str(e)}',
             'active_threads': len([t for t_id, t in running_threads.items() if t['status'] == 'running'])
         }), 200
-
+ 
+# New Rollup API Endpoints
+@app.route('/api/rollup', methods=['POST'])
+def api_rollup():
+    """Enhanced rollup API endpoint with detailed parameters"""
+    try:
+        data = request.get_json() or {}
+        
+        # Extract parameters
+        company_id = data.get('company_id')
+        year = data.get('year')
+        internal_code_id = data.get('internal_code_id')
+        frequency = data.get('frequency', 'yearly')
+        process_all = data.get('process_all', False)
+        
+        logger.info(f"Received rollup API request: company_id={company_id}, year={year}, internal_code_id={internal_code_id}, frequency={frequency}, process_all={process_all}")
+        
+        # Validate required parameters
+        if not process_all and not company_id:
+            return jsonify({
+                'status': 'error',
+                'error': 'company_id is required unless process_all is true'
+            }), 400
+        
+        if company_id:
+            try:
+                company_id = int(company_id)
+            except ValueError:
+                return jsonify({
+                    'status': 'error',
+                    'error': 'Invalid company_id. Must be an integer.'
+                }), 400
+        
+        # Initialize rollup controller
+        try:
+            controller = rollcontroller.SiteDataRollup()
+        except Exception as e:
+            logger.error(f"Failed to initialize rollup controller: {str(e)}")
+            return jsonify({
+                'status': 'error',
+                'error': f'Failed to initialize rollup controller: {str(e)}'
+            }), 500
+        
+        # Process rollup based on parameters
+        if process_all:
+            # Process all companies
+            result = controller.process_company_data(company_id=None)
+        elif year and internal_code_id:
+            # Process specific year and internal_code_id for a company
+            if not company_id:
+                return jsonify({
+                    'status': 'error',
+                    'error': 'company_id is required when processing specific year and internal_code_id'
+                }), 400
+            
+            # Fetch site data
+            site_data = controller.fetch_site_data(str(company_id))
+            if not site_data:
+                return jsonify({
+                    'status': 'error',
+                    'error': f'Could not fetch site data for company {company_id}'
+                }), 404
+            
+            # Get cdata based on frequency
+            if frequency == 'monthly':
+                cdata_list = list(controller.cdata_monthly.find({
+                    "company_id": str(company_id),
+                    "reporting_year": year,
+                    "internal_code_id": internal_code_id
+                }))
+            elif frequency == 'quarterly':
+                cdata_list = list(controller.cdata_quarterly.find({
+                    "company_id": str(company_id),
+                    "reporting_year": year,
+                    "internal_code_id": internal_code_id
+                }))
+            elif frequency == 'bi_annual':
+                cdata_list = list(controller.cdata_bi_annual.find({
+                    "company_id": str(company_id),
+                    "reporting_year": year,
+                    "internal_code_id": internal_code_id
+                }))
+            else:  # yearly
+                cdata_list = list(controller.cdata_yearly.find({
+                    "company_id": str(company_id),
+                    "reporting_year": year,
+                    "internal_code_id": internal_code_id
+                }))
+            
+            if not cdata_list:
+                return jsonify({
+                    'status': 'warning',
+                    'message': f'No {frequency} data found for company {company_id}, year {year}, internal_code_id {internal_code_id}'
+                }), 200
+            
+            # Process rollup
+            controller.process_rollup(site_data, cdata_list, year, internal_code_id, frequency)
+            
+            result = {
+                'success': True,
+                'message': f'Rollup processed successfully for {frequency} data',
+                'data': {
+                    'company_id': company_id,
+                    'year': year,
+                    'internal_code_id': internal_code_id,
+                    'frequency': frequency,
+                    'records_processed': len(controller.new_rollup_table),
+                    'rollup_summary': controller.export_to_database_format()
+                }
+            }
+        else:
+            # Process company with default logic
+            result = controller.process_company_data(company_id=company_id)
+        
+        # Convert ObjectIds to strings for JSON serialization
+        result = convert_objectids_to_strings(result)
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Error in rollup API: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+ 
+@app.route('/api/rollup/status', methods=['GET'])
+def api_rollup_status():
+    """Get rollup processing status and statistics"""
+    try:
+        # Get query parameters
+        company_id = request.args.get('company_id')
+        frequency = request.args.get('frequency', 'all')
+        
+        # Initialize controller to access collections
+        controller = rollcontroller.SiteDataRollup()
+        
+        # Get collection counts
+        status_data = {}
+        
+        if frequency == 'all' or frequency == 'monthly':
+            monthly_count = controller.rollup_monthly.count_documents({})
+            status_data['monthly'] = monthly_count
+        
+        if frequency == 'all' or frequency == 'quarterly':
+            quarterly_count = controller.rollup_quarterly.count_documents({})
+            status_data['quarterly'] = quarterly_count
+        
+        if frequency == 'all' or frequency == 'bi_annual':
+            bi_annual_count = controller.rollup_bi_annual.count_documents({})
+            status_data['bi_annual'] = bi_annual_count
+        
+        if frequency == 'all' or frequency == 'yearly':
+            yearly_count = controller.rollup_yearly.count_documents({})
+            status_data['yearly'] = yearly_count
+        
+        # Get company-specific counts if company_id provided
+        if company_id:
+            company_filter = {"company_id": str(company_id)}
+            status_data['company_specific'] = {}
+            
+            if frequency == 'all' or frequency == 'monthly':
+                status_data['company_specific']['monthly'] = controller.rollup_monthly.count_documents(company_filter)
+            if frequency == 'all' or frequency == 'quarterly':
+                status_data['company_specific']['quarterly'] = controller.rollup_quarterly.count_documents(company_filter)
+            if frequency == 'all' or frequency == 'bi_annual':
+                status_data['company_specific']['bi_annual'] = controller.rollup_bi_annual.count_documents(company_filter)
+            if frequency == 'all' or frequency == 'yearly':
+                status_data['company_specific']['yearly'] = controller.rollup_yearly.count_documents(company_filter)
+        
+        return jsonify({
+            'status': 'success',
+            'data': status_data,
+            'timestamp': time.time()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting rollup status: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+ 
+@app.route('/api/rollup/data', methods=['GET'])
+def api_rollup_data():
+    """Get rollup data with filtering options"""
+    try:
+        # Get query parameters
+        company_id = request.args.get('company_id')
+        frequency = request.args.get('frequency', 'yearly')
+        year = request.args.get('year')
+        internal_code_id = request.args.get('internal_code_id')
+        limit = request.args.get('limit', 100, type=int)
+        skip = request.args.get('skip', 0, type=int)
+        
+        # Initialize controller
+        controller = rollcontroller.SiteDataRollup()
+        
+        # Build filter
+        filter_query = {}
+        if company_id:
+            filter_query['company_id'] = str(company_id)
+        if year:
+            filter_query['type_year'] = int(year)
+        if internal_code_id:
+            filter_query['internal_code_id'] = internal_code_id
+        
+        # Select collection based on frequency
+        if frequency == 'monthly':
+            collection = controller.rollup_monthly
+        elif frequency == 'quarterly':
+            collection = controller.rollup_quarterly
+        elif frequency == 'bi_annual':
+            collection = controller.rollup_bi_annual
+        else:  # yearly
+            collection = controller.rollup_yearly
+        
+        # Get data with pagination
+        cursor = collection.find(filter_query).skip(skip).limit(limit)
+        data = list(cursor)
+        
+        # Convert ObjectIds to strings
+        data = convert_objectids_to_strings(data)
+        
+        # Get total count
+        total_count = collection.count_documents(filter_query)
+        
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'records': data,
+                'pagination': {
+                    'total': total_count,
+                    'limit': limit,
+                    'skip': skip,
+                    'has_more': (skip + limit) < total_count
+                },
+                'filters': {
+                    'company_id': company_id,
+                    'frequency': frequency,
+                    'year': year,
+                    'internal_code_id': internal_code_id
+                }
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting rollup data: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+ 
+@app.route('/api/rollup/sites/<company_id>', methods=['GET'])
+def api_rollup_sites(company_id):
+    """Get site hierarchy for a specific company"""
+    try:
+        # Initialize controller
+        controller = rollcontroller.SiteDataRollup()
+        
+        # Fetch site data
+        site_data = controller.fetch_site_data(company_id)
+        
+        if not site_data:
+            return jsonify({
+                'status': 'error',
+                'error': f'Could not fetch site data for company {company_id}'
+            }), 404
+        
+        # Convert ObjectIds to strings
+        site_data = convert_objectids_to_strings(site_data)
+        
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'company_id': company_id,
+                'site_hierarchy': site_data
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching site data: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+ 
 @app.route('/run-aggregation', methods=['POST'])
 def run_aggregation():
     """Run aggregation process in background"""
@@ -312,7 +603,7 @@ def run_aggregation_for_company(company_id):
 def run_rollup_for_company(company_id):
     """Run rollup process synchronously for a specific company"""
     try:
-        result = rollcontroller.main(company_id=company_id)
+        result = rollcontroller.main(company_id)
         
         logger.info(f"Rollup completed for company_id {company_id}")
         return jsonify({

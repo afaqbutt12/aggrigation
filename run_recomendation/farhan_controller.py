@@ -5,11 +5,11 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()  
-MONGODB_URI = os.getenv('MONGODB_URI')
-DATABASE_NAME = os.getenv('MONGODB_DB_NAME',)
+MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
+DATABASE_NAME = os.getenv('MONGODB_DB_NAME', 'ensogove')
 # Connect to MongoDB
-client = MongoClient('mongodb://spectreco:1uxuZuDb5eVkxgm@172.30.1.116:27017/spectrecostage?directConnection=true&serverSelectionTimeoutMS=2000&appName=mongosh+2.1.4')  # Replace with your MongoDB URI
-db = client['spectreco']  # Replace with your database name
+client = MongoClient(MONGODB_URI)  # Replace with your MongoDB URI
+db = client[DATABASE_NAME]  # Replace with your database name
 collection = db['company_codes']  # Replace with your collection name
 print("Connected to Mongo DB")
 
